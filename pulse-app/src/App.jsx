@@ -1,147 +1,220 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, Fingerprint, Activity, Cpu, Globe, Zap } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import confetti from 'canvas-confetti';
+import {
+  ArrowRight,
+  Bot,
+  Boxes,
+  Clock3,
+  Cpu,
+  Gauge,
+  Globe2,
+  Orbit,
+  ShieldCheck,
+  Sparkles,
+  Wallet2,
+  Zap,
+} from 'lucide-react';
+
+const modules = [
+  {
+    id: 'delegate',
+    title: 'AI Agentic Delegate',
+    subtitle: 'Autonomous policy routing',
+    description:
+      'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.',
+    accent: 'from-cyan-400 to-blue-500',
+    icon: Bot,
+    stat: '92% signal clarity',
+  },
+  {
+    id: 'escrow',
+    title: 'Time-Stream Escrow',
+    subtitle: 'Programmable milestone trust',
+    description:
+      'Release funds on a live cadence while preserving custody, compliance, and counterparty confidence.',
+    accent: 'from-emerald-400 to-cyan-400',
+    icon: Clock3,
+    stat: '24/7 escrow pulse',
+  },
+  {
+    id: 'liquidity',
+    title: 'Unified Liquidity Blackhole',
+    subtitle: 'Concentrated flow control',
+    description:
+      'Bury fragmented balances into a single synthetic reserve with instant composability across chains.',
+    accent: 'from-fuchsia-500 to-cyan-500',
+    icon: Boxes,
+    stat: '$4.8M synchronized',
+  },
+  {
+    id: 'gas',
+    title: 'Silent Gas Shield',
+    subtitle: 'Zero-friction execution',
+    description:
+      'Absorb fee spikes through abstraction layers so execution remains clean, quiet, and economically efficient.',
+    accent: 'from-violet-500 to-cyan-400',
+    icon: ShieldCheck,
+    stat: '0.00 gas noise',
+  },
+  {
+    id: 'passport',
+    title: 'Holographic Web3 Passport',
+    subtitle: 'Portable identity mesh',
+    description:
+      'Carry a living, verifiable identity across dApps with privacy-preserving attestations and instant trust checks.',
+    accent: 'from-cyan-300 to-slate-200',
+    icon: Orbit,
+    stat: 'Multi-chain verified',
+  },
+];
 
 export default function App() {
-  const [status, setStatus] = useState('idle');
-  const [progress, setProgress] = useState(0);
+  const [activeModule, setActiveModule] = useState(modules[0].id);
 
-  useEffect(() => {
-    if (status === 'scanning') {
-      const interval = setInterval(() => {
-        setProgress((p) => {
-          if (p >= 100) {
-            clearInterval(interval);
-            setStatus('active');
-            return 100;
-          }
-          return p + 2;
-        });
-      }, 50);
+  const currentModule = useMemo(
+    () => modules.find((module) => module.id === activeModule) ?? modules[0],
+    [activeModule],
+  );
 
-      return () => clearInterval(interval);
-    }
-  }, [status]);
-
-  const getLoadingText = () => {
-    if (progress < 30) return 'Establishing Arc L1 Node...';
-    if (progress < 60) return 'Bypassing ETH Gas Protocols...';
-    if (progress < 90) return 'Unifying Cross-Chain Balances...';
-    return 'Identity Secured. Initializing...';
+  const handleActivate = () => {
+    confetti({
+      particleCount: 90,
+      spread: 80,
+      origin: { y: 0.6 },
+      colors: ['#22d3ee', '#38bdf8', '#f8fafc'],
+    });
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col items-center justify-center p-4 font-sans selection:bg-cyan-500/30 overflow-hidden relative">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#082f49_1px,transparent_1px),linear-gradient(to_bottom,#082f49_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] opacity-20"></div>
+    <div className="min-h-screen bg-[#020617] text-slate-100 selection:bg-cyan-500/40">
+      <div className="relative isolate min-h-screen overflow-hidden px-4 py-6 sm:px-6 lg:px-8">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.20),_transparent_42%),radial-gradient(circle_at_bottom_right,_rgba(56,189,248,0.14),_transparent_28%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(34,211,238,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(34,211,238,0.08)_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(circle_at_center,black_40%,transparent_90%)] opacity-30" />
 
-      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-cyan-600/20 rounded-full blur-[120px] transition-all duration-1000 ${status === 'active' ? 'opacity-100 scale-110' : 'opacity-30 scale-90'}`}></div>
-
-      <div className="max-w-md w-full z-10">
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center p-4 rounded-2xl bg-slate-900 border border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.15)] mb-6 relative overflow-hidden">
-            <div className={`absolute inset-0 bg-cyan-500/10 ${status === 'scanning' ? 'animate-pulse' : 'hidden'}`}></div>
-            <Shield className={`w-10 h-10 ${status === 'active' ? 'text-emerald-400' : 'text-cyan-400'}`} />
-          </div>
-          <h1 className="text-4xl font-black tracking-[0.2em] text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-            ARC<span className="text-white">VAULT</span>
-          </h1>
-          <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mt-3 flex items-center justify-center">
-            <Cpu className="w-3 h-3 mr-1" /> Enterprise Zero-Gas Protocol
-          </p>
-        </div>
-
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-cyan-500/20 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-          {status === 'idle' && (
-            <div className="text-center animate-in fade-in duration-500">
-              <p className="text-sm text-slate-400 mb-8 font-mono">
-                System locked. Identity verification required to access Unified Cross-Chain Balances.
+        <div className="relative mx-auto flex max-w-7xl flex-col gap-6 rounded-[32px] border border-cyan-400/20 bg-slate-950/70 p-4 shadow-[0_0_80px_rgba(34,211,238,0.12)] backdrop-blur-2xl sm:p-6 lg:p-8">
+          <header className="flex flex-col gap-4 rounded-[24px] border border-cyan-400/20 bg-slate-900/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.35em] text-cyan-300">
+                <Cpu className="h-3.5 w-3.5" /> ArcOS • Agentic Economic Matrix
+              </div>
+              <h1 className="text-3xl font-black tracking-[0.2em] text-white sm:text-4xl">
+                Future-proof finance, tuned for autonomous motion.
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm text-slate-400 sm:text-base">
+                Command liquidity, identity, and execution from a single premium cockpit built for the next era of onchain operations.
               </p>
-
-              <button
-                onClick={() => setStatus('scanning')}
-                className="relative group w-32 h-32 mx-auto rounded-full bg-slate-950 border border-cyan-500/30 flex items-center justify-center hover:border-cyan-400 transition-all shadow-[0_0_40px_rgba(6,182,212,0.1)] active:scale-95"
-              >
-                <div className="absolute inset-0 rounded-full bg-cyan-500/5 group-hover:bg-cyan-500/10 transition-colors"></div>
-                <Fingerprint className="w-16 h-16 text-cyan-500 group-hover:text-cyan-300 transition-colors" />
-
-                <div className="absolute top-0 left-0 w-full h-1 bg-cyan-400/50 blur-[2px] hidden group-hover:block animate-[scan_2s_ease-in-out_infinite]"></div>
-              </button>
-              <p className="mt-6 text-xs text-cyan-500 font-mono tracking-widest uppercase">Tap to Initialize</p>
             </div>
-          )}
 
-          {status === 'scanning' && (
-            <div className="text-center py-8 animate-in fade-in duration-300">
-              <div className="relative w-24 h-24 mx-auto mb-8">
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle cx="48" cy="48" r="45" className="stroke-slate-800" strokeWidth="4" fill="none" />
-                  <circle
-                    cx="48"
-                    cy="48"
-                    r="45"
-                    className="stroke-cyan-500 transition-all duration-100"
-                    strokeWidth="4"
-                    fill="none"
-                    strokeDasharray="283"
-                    strokeDashoffset={283 - (283 * progress) / 100}
-                  />
-                </svg>
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xl font-bold font-mono text-cyan-400">
-                  {progress}%
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-300">
+                <div className="flex items-center gap-2 font-semibold">
+                  <Zap className="h-4 w-4" /> Network live
+                </div>
+                <p className="mt-1 text-xs uppercase tracking-[0.3em] text-emerald-200/80">8.2ms latency</p>
+              </div>
+              <button
+                onClick={handleActivate}
+                className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-200 transition hover:-translate-y-0.5 hover:bg-cyan-400/20"
+              >
+                Trigger pulse
+              </button>
+            </div>
+          </header>
+
+          <main className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            <section className="rounded-[28px] border border-cyan-400/20 bg-slate-900/60 p-4 sm:p-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-cyan-400">System layers</p>
+                  <h2 className="mt-2 text-xl font-semibold text-white">Choose a control surface</h2>
+                </div>
+                <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 p-2 text-cyan-300">
+                  <Gauge className="h-5 w-5" />
                 </div>
               </div>
-              <p className="text-xs font-mono text-cyan-300 animate-pulse">{getLoadingText()}</p>
-            </div>
-          )}
 
-          {status === 'active' && (
-            <div className="animate-in slide-in-from-bottom-4 fade-in duration-700">
-              <div className="flex items-center justify-between mb-8 pb-6 border-b border-slate-800">
-                <div>
-                  <p className="text-[10px] text-slate-500 font-mono mb-1">NETWORK STATUS</p>
-                  <div className="flex items-center text-emerald-400 font-mono text-xs font-bold">
-                    <Activity className="w-3 h-3 mr-1" /> SECURE & LIVE
+              <div className="grid gap-3">
+                {modules.map((module) => {
+                  const Icon = module.icon;
+                  const isActive = module.id === activeModule;
+                  return (
+                    <button
+                      key={module.id}
+                      onClick={() => setActiveModule(module.id)}
+                      className={`group rounded-[20px] border p-4 text-left transition ${
+                        isActive
+                          ? 'border-cyan-400/50 bg-cyan-400/10 shadow-[0_0_35px_rgba(34,211,238,0.14)]'
+                          : 'border-slate-800 bg-slate-950/60 hover:border-cyan-400/30 hover:bg-slate-900/80'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`rounded-2xl bg-gradient-to-br ${module.accent} p-2 text-slate-950`}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-white">{module.title}</p>
+                            <p className="text-xs uppercase tracking-[0.28em] text-slate-500">{module.subtitle}</p>
+                          </div>
+                        </div>
+                        <ArrowRight className={`h-4 w-4 transition ${isActive ? 'translate-x-1 text-cyan-300' : 'text-slate-600 group-hover:text-cyan-300'}`} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-[28px] border border-cyan-400/20 bg-slate-900/60 p-4 sm:p-6">
+              <div className="rounded-[24px] border border-cyan-400/20 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <div className="mb-5 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-cyan-300">
+                    <Sparkles className="h-4 w-4" />
+                    <span className="text-[10px] uppercase tracking-[0.35em]">Active module</span>
+                  </div>
+                  <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-cyan-200">
+                    {currentModule.stat}
+                  </span>
+                </div>
+
+                <div className={`rounded-[22px] border border-cyan-400/20 bg-gradient-to-br ${currentModule.accent} p-[1px]`}>
+                  <div className="rounded-[21px] bg-slate-950/90 p-5">
+                    <div className="mb-5 inline-flex rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-3 text-cyan-200">
+                      <currentModule.icon className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-2xl font-semibold text-white">{currentModule.title}</h3>
+                    <p className="mt-3 text-sm leading-7 text-slate-400">{currentModule.description}</p>
+
+                    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                        <div className="flex items-center gap-2 text-cyan-300">
+                          <Wallet2 className="h-4 w-4" />
+                          <span className="text-xs uppercase tracking-[0.3em]">Treasury</span>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-300">Protected and auto-routed</p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                        <div className="flex items-center gap-2 text-cyan-300">
+                          <Globe2 className="h-4 w-4" />
+                          <span className="text-xs uppercase tracking-[0.3em]">Reach</span>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-300">Cross-chain by default</p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleActivate}
+                      className="mt-6 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                    >
+                      Activate protocol <ArrowRight className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-slate-500 font-mono mb-1">GAS CONSUMPTION</p>
-                  <p className="text-cyan-400 font-mono text-xs font-bold">0.00 USDC (NATIVE)</p>
-                </div>
               </div>
-
-              <div className="bg-black/40 rounded-2xl p-6 border border-cyan-900/50 mb-6 relative overflow-hidden">
-                <div className="absolute right-0 top-0 w-24 h-24 bg-cyan-500/5 rounded-bl-full"></div>
-                <p className="text-xs text-slate-500 font-mono tracking-widest mb-2">UNIFIED BALANCE</p>
-                <div className="flex items-baseline space-x-2">
-                  <h2 className="text-4xl font-black text-white font-mono">1,024.50</h2>
-                  <span className="text-cyan-500 font-bold">USDC</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button className="flex flex-col items-center justify-center p-4 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500/50 transition-all group">
-                  <Zap className="w-5 h-5 text-cyan-400 mb-2 group-hover:scale-110 transition-transform" />
-                  <span className="text-[10px] font-mono tracking-widest uppercase">Cross-Chain Swap</span>
-                </button>
-                <button className="flex flex-col items-center justify-center p-4 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 hover:border-cyan-400 transition-all group">
-                  <Globe className="w-5 h-5 text-cyan-400 mb-2 group-hover:scale-110 transition-transform" />
-                  <span className="text-[10px] font-mono tracking-widest uppercase text-cyan-100">Deploy Escrow</span>
-                </button>
-              </div>
-            </div>
-          )}
+            </section>
+          </main>
         </div>
       </div>
-
-      <style dangerouslySetInnerHTML={{
-        __html: `
-          @keyframes scan {
-            0% { top: 0; opacity: 0; }
-            10% { opacity: 1; }
-            90% { opacity: 1; }
-            100% { top: 100%; opacity: 0; }
-          }
-        `
-      }} />
     </div>
   );
 }
