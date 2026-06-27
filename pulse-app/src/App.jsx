@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import {
   ArrowRight,
@@ -12,7 +12,8 @@ import {
   ShieldCheck,
   Sparkles,
   Wallet2,
-  Zap
+  Zap,
+  LogOut
 } from 'lucide-react';
 
 const modules = [
@@ -69,44 +70,66 @@ export default function App() {
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
 
-  const handleConnect = () => {
-    setIsConnecting(true);
-    // Simulate Web3 connection process
-    setTimeout(() => {
-      setWalletAddress('0x71C...9A23');
-      setBalance('1,024.50');
-      setIsConnecting(false);
-      
-      // Success Animation
-      confetti({
-        particleCount: 150,
-        spread: 80,
-        origin: { y: 0.3 },
-        colors: ['#22d3ee', '#34d399', '#c084fc']
-      });
-    }, 1500);
+  // আসল Web3 কানেকশন লজিক
+  const connectRealWallet = async () => {
+    if (typeof window !== 'undefined' && typeof window.ethereum !== 'undefined') {
+      try {
+        setIsConnecting(true);
+        // মেটামাস্ক বা ট্রাস্ট ওয়ালেটকে কল করা
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const address = accounts[0];
+        setWalletAddress(address);
+
+        // আসল ব্যালেন্স চেক করা
+        const balanceHex = await window.ethereum.request({
+          method: 'eth_getBalance',
+          params: [address, 'latest']
+        });
+        
+        // ব্যালেন্স কনভার্ট করা (Wei to ETH/Token)
+        const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
+        setBalance(realBalance);
+        setIsConnecting(false);
+
+        // সাকসেস এনিমেশন
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.3 },
+          colors: ['#22d3ee', '#34d399', '#c084fc']
+        });
+      } catch (error) {
+        console.error("Connection failed", error);
+        setIsConnecting(false);
+      }
+    } else {
+      alert('Boss, Please open this site inside MetaMask, Trust Wallet browser, or install a Web3 extension! 🚀');
+    }
+  };
+
+  // ওয়ালেট ডিসকানেক্ট লজিক
+  const disconnectWallet = () => {
+    setWalletAddress(null);
+    setBalance('0.00');
   };
 
   const handleAction = () => {
     if (!walletAddress) {
-      alert('Boss, please connect your Web3 wallet first! 🚀');
+      alert('Boss, please connect your Web3 wallet first to execute this module! 🚀');
       return;
     }
     // Execution Animation
     confetti({
-      particleCount: 80,
-      angle: 60,
-      spread: 55,
-      origin: { x: 0 },
-      colors: ['#22d3ee']
+      particleCount: 100,
+      angle: 90,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ['#22d3ee', '#f472b6']
     });
-    confetti({
-      particleCount: 80,
-      angle: 120,
-      spread: 55,
-      origin: { x: 1 },
-      colors: ['#34d399']
-    });
+  };
+
+  const formatAddress = (address) => {
+    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
   };
 
   const activeData = modules.find(m => m.id === activeModule);
@@ -123,17 +146,23 @@ export default function App() {
             <span className="font-bold tracking-widest text-white">ARC<span className="text-cyan-400">OS</span></span>
           </div>
           
-          <button 
-            onClick={!walletAddress ? handleConnect : undefined}
-            disabled={isConnecting}
-            className={`px-5 py-2 rounded-lg text-sm font-mono font-bold transition-all duration-300 ${
-              walletAddress 
-                ? 'bg-slate-900 border border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.1)]'
-                : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]'
-            }`}
-          >
-            {isConnecting ? 'SYNCING NODE...' : walletAddress ? walletAddress : 'CONNECT WALLET'}
-          </button>
+          {walletAddress ? (
+            <button 
+              onClick={disconnectWallet}
+              className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 border border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.1)] flex items-center gap-2 hover:bg-slate-800 transition-all"
+            >
+              {formatAddress(walletAddress)}
+              <LogOut className="w-4 h-4 text-rose-400" />
+            </button>
+          ) : (
+            <button 
+              onClick={connectRealWallet}
+              disabled={isConnecting}
+              className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition-all duration-300"
+            >
+              {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -166,15 +195,15 @@ export default function App() {
             </div>
             
             <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
-              <div className="text-[10px] text-slate-500 font-mono mb-1 uppercase tracking-wider">Unified Balance</div>
+              <div className="text-[10px] text-slate-500 font-mono mb-1 uppercase tracking-wider">Real Balance</div>
               <div className="text-2xl font-bold text-white font-mono">
-                {balance} <span className="text-cyan-500 text-sm">USDC</span>
+                {balance} <span className="text-cyan-500 text-sm">NATIVE</span>
               </div>
             </div>
           </div>
         </section>
 
-        {/* System Layers (Modules List) */}
+        {/* System Layers */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono">Choose a control surface</h2>
@@ -210,7 +239,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* Active Module Execution Area */}
+        {/* Active Module */}
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 relative overflow-hidden">
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           
@@ -251,7 +280,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Execute Action Button */}
+            {/* Execute Action */}
             <div className="pt-4 border-t border-white/5 mt-6">
               <button 
                 onClick={handleAction}
