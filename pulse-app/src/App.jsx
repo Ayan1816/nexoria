@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
   ArrowRight,
@@ -70,28 +70,69 @@ export default function App() {
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
 
-  // আসল Web3 কানেকশন লজিক
+  // Arc Network Configuration
+  const arcChainId = '0x1A4'; // Custom Chain ID for Arc Network
+  
+  const switchToArcNetwork = async () => {
+    try {
+      // প্রথমে চেক করবে Arc Network অ্যাড করা আছে কি না
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: arcChainId }],
+      });
+    } catch (switchError) {
+      // যদি অ্যাড করা না থাকে, তবে অটোমেটিক অ্যাড করে নেবে
+      if (switchError.code === 4902) {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [
+            {
+              chainId: arcChainId,
+              chainName: 'Arc Network',
+              rpcUrls: ['https://rpc.testnet.arc.network'], // Arc RPC
+              nativeCurrency: {
+                name: 'ARC Token',
+                symbol: 'ARC',
+                decimals: 18,
+              },
+            },
+          ],
+        });
+      } else {
+        throw switchError;
+      }
+    }
+  };
+
   const connectRealWallet = async () => {
     if (typeof window !== 'undefined' && typeof window.ethereum !== 'undefined') {
       try {
         setIsConnecting(true);
-        // মেটামাস্ক বা ট্রাস্ট ওয়ালেটকে কল করা
+        
+        // ১. এই কোডটি প্রতিবার জোর করে পারমিশন এবং অ্যাকাউন্ট সিলেক্ট করতে বলবে
+        await window.ethereum.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }]
+        });
+
+        // ২. অ্যাকাউন্ট পারমিশন পাওয়ার পর অ্যাড্রেস রিড করা
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         const address = accounts[0];
         setWalletAddress(address);
 
-        // আসল ব্যালেন্স চেক করা
+        // ৩. জোর করে Arc Network-এ সুইচ করানো
+        await switchToArcNetwork();
+
+        // ৪. Arc Network থেকে আসল ব্যালেন্স রিড করা
         const balanceHex = await window.ethereum.request({
           method: 'eth_getBalance',
           params: [address, 'latest']
         });
         
-        // ব্যালেন্স কনভার্ট করা (Wei to ETH/Token)
         const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
         setBalance(realBalance);
         setIsConnecting(false);
 
-        // সাকসেস এনিমেশন
         confetti({
           particleCount: 150,
           spread: 80,
@@ -99,15 +140,14 @@ export default function App() {
           colors: ['#22d3ee', '#34d399', '#c084fc']
         });
       } catch (error) {
-        console.error("Connection failed", error);
+        console.error("Connection failed or user rejected", error);
         setIsConnecting(false);
       }
     } else {
-      alert('Boss, Please open this site inside MetaMask, Trust Wallet browser, or install a Web3 extension! 🚀');
+      alert('Boss, Please open this site inside MetaMask or Trust Wallet browser! 🚀');
     }
   };
 
-  // ওয়ালেট ডিসকানেক্ট লজিক
   const disconnectWallet = () => {
     setWalletAddress(null);
     setBalance('0.00');
@@ -118,7 +158,6 @@ export default function App() {
       alert('Boss, please connect your Web3 wallet first to execute this module! 🚀');
       return;
     }
-    // Execution Animation
     confetti({
       particleCount: 100,
       angle: 90,
@@ -138,7 +177,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30">
       
-      {/* Top Navigation Bar */}
       <header className="border-b border-white/5 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -168,7 +206,6 @@ export default function App() {
 
       <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         
-        {/* Hero Section */}
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           
@@ -190,20 +227,19 @@ export default function App() {
               <div className="text-[10px] text-slate-500 font-mono mb-1 uppercase tracking-wider">Network Status</div>
               <div className="flex items-center gap-2 text-emerald-400 font-mono text-sm">
                 <Zap className="w-3 h-3" />
-                SECURE & LIVE
+                ARC LIVE
               </div>
             </div>
             
             <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
-              <div className="text-[10px] text-slate-500 font-mono mb-1 uppercase tracking-wider">Real Balance</div>
+              <div className="text-[10px] text-slate-500 font-mono mb-1 uppercase tracking-wider">Arc Balance</div>
               <div className="text-2xl font-bold text-white font-mono">
-                {balance} <span className="text-cyan-500 text-sm">NATIVE</span>
+                {balance} <span className="text-cyan-500 text-sm">ARC</span>
               </div>
             </div>
           </div>
         </section>
 
-        {/* System Layers */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono">Choose a control surface</h2>
@@ -239,7 +275,6 @@ export default function App() {
           </div>
         </section>
 
-        {/* Active Module */}
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 relative overflow-hidden">
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           
@@ -280,7 +315,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Execute Action */}
             <div className="pt-4 border-t border-white/5 mt-6">
               <button 
                 onClick={handleAction}
