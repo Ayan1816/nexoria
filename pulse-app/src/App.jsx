@@ -70,81 +70,73 @@ export default function App() {
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
 
-  // Arc Network Configuration
-  const arcChainId = '0x1A4'; // Custom Chain ID for Arc Network
-  
-  const switchToArcNetwork = async () => {
-    try {
-      // প্রথমে চেক করবে Arc Network অ্যাড করা আছে কি না
-      await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: arcChainId }],
-      });
-    } catch (switchError) {
-      // যদি অ্যাড করা না থাকে, তবে অটোমেটিক অ্যাড করে নেবে
-      if (switchError.code === 4902) {
-        await window.ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [
-            {
-              chainId: arcChainId,
-              chainName: 'Arc Network',
-              rpcUrls: ['https://rpc.testnet.arc.network'], // Arc RPC
-              nativeCurrency: {
-                name: 'ARC Token',
-                symbol: 'ARC',
-                decimals: 18,
-              },
-            },
-          ],
-        });
-      } else {
-        throw switchError;
-      }
-    }
-  };
+  const arcChainId = '0x1A4'; // Arc Testnet Chain ID
 
   const connectRealWallet = async () => {
-    if (typeof window !== 'undefined' && typeof window.ethereum !== 'undefined') {
+    if (typeof window !== 'undefined' && window.ethereum) {
       try {
         setIsConnecting(true);
         
-        // ১. এই কোডটি প্রতিবার জোর করে পারমিশন এবং অ্যাকাউন্ট সিলেক্ট করতে বলবে
-        await window.ethereum.request({
-          method: 'wallet_requestPermissions',
-          params: [{ eth_accounts: {} }]
-        });
-
-        // ২. অ্যাকাউন্ট পারমিশন পাওয়ার পর অ্যাড্রেস রিড করা
+        // ১. একাউন্ট কানেক্ট রিকোয়েস্ট
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         const address = accounts[0];
-        setWalletAddress(address);
 
-        // ৩. জোর করে Arc Network-এ সুইচ করানো
-        await switchToArcNetwork();
+        // ২. Arc Network-এ সুইচ করার চেষ্টা
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: arcChainId }],
+          });
+        } catch (switchError) {
+          // নেটওয়ার্ক না থাকলে অ্যাড করে নেবে
+          if (switchError.code === 4902) {
+            await window.ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: arcChainId,
+                  chainName: 'Arc Testnet',
+                  rpcUrls: ['https://rpc.testnet.arc.network'],
+                  nativeCurrency: {
+                    name: 'ARC Token',
+                    symbol: 'ARC',
+                    decimals: 18,
+                  },
+                },
+              ],
+            });
+          } else {
+            throw switchError;
+          }
+        }
 
-        // ৪. Arc Network থেকে আসল ব্যালেন্স রিড করা
+        // ৩. ব্যালেন্স রিড করা
         const balanceHex = await window.ethereum.request({
           method: 'eth_getBalance',
           params: [address, 'latest']
         });
         
         const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
+        
+        setWalletAddress(address);
         setBalance(realBalance);
         setIsConnecting(false);
 
+        // সাকসেস এনিমেশন
         confetti({
           particleCount: 150,
           spread: 80,
           origin: { y: 0.3 },
           colors: ['#22d3ee', '#34d399', '#c084fc']
         });
+
       } catch (error) {
-        console.error("Connection failed or user rejected", error);
+        console.error("Connection error:", error);
+        alert("Boss, wallet connection failed! Please try again.");
         setIsConnecting(false);
       }
     } else {
-      alert('Boss, Please open this site inside MetaMask or Trust Wallet browser! 🚀');
+      alert('Boss, Please open this site inside MetaMask or Trust Wallet DApp browser! 🚀');
     }
   };
 
@@ -155,7 +147,7 @@ export default function App() {
 
   const handleAction = () => {
     if (!walletAddress) {
-      alert('Boss, please connect your Web3 wallet first to execute this module! 🚀');
+      alert('Boss, please connect your Web3 wallet first! 🚀');
       return;
     }
     confetti({
@@ -198,7 +190,7 @@ export default function App() {
               disabled={isConnecting}
               className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition-all duration-300"
             >
-              {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
+              {isConnecting ? 'SYNCING...' : 'CONNECT WALLET'}
             </button>
           )}
         </div>
