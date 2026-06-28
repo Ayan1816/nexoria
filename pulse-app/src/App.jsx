@@ -31,32 +31,37 @@ export default function App() {
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
 
-      // ২. জোর করে Arc Network-এ সুইচ করানো (এটার জন্যই আগেরবার সমস্যা হচ্ছিল)
-      try {
-        await targetProvider.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: arcChainId }],
-        });
-      } catch (switchError) {
-        // যদি Arc Network অ্যাড করা না থাকে, তবে অ্যাড করার পপ-আপ দিবে
-        if (switchError.code === 4902) {
+      // ২. বর্তমান নেটওয়ার্ক চেক করা
+      const currentChain = await targetProvider.request({ method: 'eth_chainId' });
+      
+      if (currentChain !== arcChainId) {
+        try {
+          // Arc নেটওয়ার্কে সুইচ করার রিকোয়েস্ট
           await targetProvider.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: arcChainId,
-              chainName: 'Arc Testnet',
-              rpcUrls: ['https://rpc.testnet.arc.network'],
-              nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 }
-            }],
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: arcChainId }],
           });
-        } else {
-          // ইউজার যদি নেটওয়ার্ক সুইচ ক্যানসেল করে দেয়
-          throw new Error("Network switch cancelled by user");
+        } catch (switchError) {
+          // যদি চেইন অ্যাড করা না থাকে বা রাব্বি ব্লক করে
+          try {
+            await targetProvider.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: arcChainId,
+                chainName: 'Arc Testnet',
+                rpcUrls: ['https://rpc.testnet.arc.network'],
+                nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 }
+              }],
+            });
+          } catch (addError) {
+            console.error("Chain Add Error:", addError);
+            throw new Error("Rabby Security Block");
+          }
         }
       }
 
-      // নেটওয়ার্ক সুইচ হওয়ার পর ডাটা সিঙ্ক হতে সামান্য সময় দেওয়া
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // নেটওয়ার্ক সুইচ হওয়ার পর ব্যালেন্স সিঙ্ক হতে সময় দেওয়া
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
       // ৩. Arc চেইনের আসল ব্যালেন্স রিড করা
       const balanceHex = await targetProvider.request({
@@ -70,9 +75,11 @@ export default function App() {
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
     } catch (error) {
-      console.error(error);
-      alert("Boss, connection or network switch failed! Please approve the network switch to Arc.");
+      console.error("Connection Error: ", error);
       setIsConnecting(false);
+      
+      // রাব্বি যদি কোনোভাবেই সুইচ করতে না দেয়, তখন এই মেসেজটা আসবে
+      alert("Boss, Rabby is blocking the auto-switch! Please click on 'Ethereum' inside your Rabby Wallet, change it to 'Arc Testnet' manually, and try again! 🚀");
     }
   };
 
@@ -112,7 +119,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       
-      {/* Wallet Selector Modal */}
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
