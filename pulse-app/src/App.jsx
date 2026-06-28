@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
   ArrowRight, Bot, Boxes, Clock3, Cpu, Gauge, Globe2,
-  Orbit, ShieldCheck, Sparkles, Wallet2, Zap, LogOut
+  Orbit, ShieldCheck, Sparkles, Wallet2, Zap, LogOut, Lock, Timer
 } from 'lucide-react';
 
 const modules = [
   { id: 'delegate', title: 'AI Agentic Delegate', subtitle: 'AUTONOMOUS POLICY ROUTING', description: 'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: '92% SIGNAL CLARITY' },
-  { id: 'escrow', title: 'Time-Stream Escrow', subtitle: 'PROGRAMMABLE MILESTONE TRUST', description: 'Release funds on a live cadence while preserving custody, compliance, and counterparty confidence.', accent: 'from-emerald-400 to-cyan-400', icon: Clock3, stat: '24/7 ESCROW PULSE' },
+  { id: 'escrow', title: 'Time-Stream Escrow', subtitle: 'PROGRAMMABLE MILESTONE TRUST', description: 'Lock funds securely in a time-locked smart contract. Funds can only be released after the set time expires.', accent: 'from-emerald-400 to-cyan-400', icon: Clock3, stat: '24/7 ESCROW PULSE' },
   { id: 'liquidity', title: 'Unified Liquidity Blackhole', subtitle: 'CONCENTRATED FLOW CONTROL', description: 'Bury fragmented balances into a single unified flow. Abstract away chain specifics entirely.', accent: 'from-fuchsia-500 to-cyan-500', icon: Boxes, stat: 'OMNICHAIN' },
   { id: 'shield', title: 'Silent Gas Shield', subtitle: 'ZERO-FRICTION EXECUTION', description: 'Native USDC gas abstraction. Users never see or pay native gas tokens like ETH or SOL again. Test Real Transaction Here.', accent: 'from-blue-500 to-indigo-500', icon: ShieldCheck, stat: 'GAS: $0.00' },
   { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
@@ -20,12 +20,17 @@ export default function App() {
   const [balance, setBalance] = useState('0.00');
   const [showWalletModal, setShowWalletModal] = useState(false);
   
-  // Transaction States
   const [activeProvider, setActiveProvider] = useState(null);
+  
+  // Shield Module States
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [txHash, setTxHash] = useState(null);
+
+  // Escrow Module States (NEW)
+  const [escrowAmount, setEscrowAmount] = useState('');
+  const [escrowDuration, setEscrowDuration] = useState('1');
 
   const arcChainIdHex = '0x4cef52'; 
 
@@ -33,7 +38,7 @@ export default function App() {
     try {
       setIsConnecting(true);
       setShowWalletModal(false);
-      setActiveProvider(targetProvider); // Provider Save করে রাখলাম ট্রানজেকশনের জন্য
+      setActiveProvider(targetProvider); 
 
       try {
         await targetProvider.request({
@@ -41,14 +46,12 @@ export default function App() {
           params: [{ eth_accounts: {} }]
         });
       } catch (permError) {
-        console.log("Permission rejected");
         setIsConnecting(false);
         return;
       }
 
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
-
       const currentChain = await targetProvider.request({ method: 'eth_chainId' });
       
       if (currentChain.toLowerCase() !== arcChainIdHex.toLowerCase()) {
@@ -83,15 +86,13 @@ export default function App() {
       });
       
       const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
-      
       setWalletAddress(address);
       setBalance(realBalance);
       setIsConnecting(false);
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
-      
     } catch (error) {
-      console.error("Connection Error: ", error);
+      console.error(error);
       setIsConnecting(false);
       alert("Boss, Connection cancelled! Please approve the network switch.");
     }
@@ -114,8 +115,6 @@ export default function App() {
     setBalance('0.00');
     setActiveProvider(null);
     setTxHash(null);
-    setRecipient('');
-    setAmount('');
   };
 
   const handleAction = async () => {
@@ -124,48 +123,39 @@ export default function App() {
       return;
     }
 
-    // Shield মডিউলের জন্য রিয়েল ট্রানজেকশন লজিক
     if (activeModule === 'shield') {
+      // Shield Transaction Logic (Already Working)
       if (!recipient || !amount) {
         alert('Boss, please enter Recipient Address and Amount!');
         return;
       }
-
       try {
         setIsExecuting(true);
-        setTxHash(null); // আগের হিস্ট্রি ক্লিয়ার
-
-        // Amount কে Wei তে কনভার্ট করা (Hexadecimal Format)
+        setTxHash(null);
         const valueInWei = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
-
-        // ট্রানজেকশন রিকোয়েস্ট পাঠানো
         const tx = await activeProvider.request({
           method: 'eth_sendTransaction',
-          params: [{
-            from: walletAddress,
-            to: recipient,
-            value: '0x' + valueInWei,
-          }],
+          params: [{ from: walletAddress, to: recipient, value: '0x' + valueInWei }],
         });
-
-        // সফল হলে হ্যাশ সেভ করা
         setTxHash(tx);
         setIsExecuting(false);
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 }, colors: ['#34d399', '#22d3ee', '#f472b6'] });
-
-        // ব্যালেন্স আপডেট করা (একটু সময় দিয়ে)
         setTimeout(async () => {
           const balanceHex = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
           setBalance((parseInt(balanceHex, 16) / 1e18).toFixed(4));
         }, 5000);
-
       } catch (error) {
-        console.error("Transaction Error:", error);
-        alert("Boss, Transaction Cancelled or Failed!");
         setIsExecuting(false);
       }
+    } else if (activeModule === 'escrow') {
+      // Escrow Mock Logic (Preparing for real smart contract)
+      if (!escrowAmount) {
+        alert('Boss, please enter an amount to lock!');
+        return;
+      }
+      alert(`Preparing to lock ${escrowAmount} USDC for ${escrowDuration} hours. Next step: Smart Contract Integration! 🚀`);
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#34d399'] });
     } else {
-      // অন্য মডিউলগুলোর জন্য শুধু এনিমেশন
       confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 }, colors: ['#22d3ee', '#f472b6'] });
     }
   };
@@ -202,11 +192,9 @@ export default function App() {
             <ShieldCheck className="w-6 h-6 text-cyan-400" />
             <span className="font-bold tracking-widest text-white">ARC<span className="text-cyan-400">OS</span></span>
           </div>
-          
           {walletAddress ? (
             <button onClick={disconnectWallet} className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 border border-cyan-500/30 text-cyan-400 flex items-center gap-2 hover:bg-rose-950/30 hover:border-rose-500/30 hover:text-rose-400 transition-all">
-              {formatAddress(walletAddress)}
-              <LogOut className="w-4 h-4" />
+              {formatAddress(walletAddress)} <LogOut className="w-4 h-4" />
             </button>
           ) : (
             <button onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition-all">
@@ -276,7 +264,7 @@ export default function App() {
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
             
-            {/* ইনপুট ফিল্ড শুধু Silent Gas Shield এর জন্য দেখাবে */}
+            {/* INJECTED: Silent Gas Shield Input UI */}
             {activeModule === 'shield' && (
               <div className="pt-4 space-y-4 border-t border-white/5 mt-4">
                 <div>
@@ -290,7 +278,28 @@ export default function App() {
               </div>
             )}
 
-            {/* ট্রানজেকশন সফল হলে লিংক দেখাবে */}
+            {/* INJECTED: Time-Stream Escrow Input UI */}
+            {activeModule === 'escrow' && (
+              <div className="pt-4 space-y-4 border-t border-emerald-500/20 mt-4">
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Lock className="w-3 h-3"/> AMOUNT TO LOCK (USDC)</label>
+                    <input type="number" placeholder="5.00" value={escrowAmount} onChange={e => setEscrowAmount(e.target.value)} className="w-full bg-slate-950 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Timer className="w-3 h-3"/> LOCK DURATION</label>
+                    <select value={escrowDuration} onChange={e => setEscrowDuration(e.target.value)} className="w-full bg-slate-950 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all">
+                      <option value="1">1 Hour</option>
+                      <option value="6">6 Hours</option>
+                      <option value="24">24 Hours</option>
+                      <option value="72">3 Days</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Shield Transaction Success Hash */}
             {txHash && activeModule === 'shield' && (
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs font-mono break-all mt-4">
                 ✅ Success! TX Hash: <br/>
@@ -304,7 +313,7 @@ export default function App() {
               <button 
                 onClick={handleAction} 
                 disabled={isExecuting}
-                className="w-full md:w-auto px-8 py-3 bg-white text-slate-950 font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                className={`w-full md:w-auto px-8 py-3 text-slate-950 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 ${activeModule === 'escrow' ? 'bg-emerald-400 hover:bg-emerald-300 hover:shadow-[0_0_20px_rgba(52,211,153,0.3)]' : 'bg-white hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)]'}`}
               >
                 <Zap className="w-4 h-4" /> 
                 {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
@@ -315,4 +324,4 @@ export default function App() {
       </main>
     </div>
   );
-      }
+}
