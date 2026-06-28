@@ -6,51 +6,11 @@ import {
 } from 'lucide-react';
 
 const modules = [
-  {
-    id: 'delegate',
-    title: 'AI Agentic Delegate',
-    subtitle: 'AUTONOMOUS POLICY ROUTING',
-    description: 'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.',
-    accent: 'from-cyan-400 to-blue-500',
-    icon: Bot,
-    stat: '92% SIGNAL CLARITY'
-  },
-  {
-    id: 'escrow',
-    title: 'Time-Stream Escrow',
-    subtitle: 'PROGRAMMABLE MILESTONE TRUST',
-    description: 'Release funds on a live cadence while preserving custody, compliance, and counterparty confidence.',
-    accent: 'from-emerald-400 to-cyan-400',
-    icon: Clock3,
-    stat: '24/7 ESCROW PULSE'
-  },
-  {
-    id: 'liquidity',
-    title: 'Unified Liquidity Blackhole',
-    subtitle: 'CONCENTRATED FLOW CONTROL',
-    description: 'Bury fragmented balances into a single unified flow. Abstract away chain specifics entirely.',
-    accent: 'from-fuchsia-500 to-cyan-500',
-    icon: Boxes,
-    stat: 'OMNICHAIN'
-  },
-  {
-    id: 'shield',
-    title: 'Silent Gas Shield',
-    subtitle: 'ZERO-FRICTION EXECUTION',
-    description: 'Native USDC gas abstraction. Users never see or pay native gas tokens like ETH or SOL again.',
-    accent: 'from-blue-500 to-indigo-500',
-    icon: ShieldCheck,
-    stat: 'GAS: $0.00'
-  },
-  {
-    id: 'passport',
-    title: 'Holographic Web3 Passport',
-    subtitle: 'PORTABLE IDENTITY MESH',
-    description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.',
-    accent: 'from-violet-500 to-fuchsia-500',
-    icon: Orbit,
-    stat: 'boss.arc'
-  }
+  { id: 'delegate', title: 'AI Agentic Delegate', subtitle: 'AUTONOMOUS POLICY ROUTING', description: 'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: '92% SIGNAL CLARITY' },
+  { id: 'escrow', title: 'Time-Stream Escrow', subtitle: 'PROGRAMMABLE MILESTONE TRUST', description: 'Release funds on a live cadence while preserving custody, compliance, and counterparty confidence.', accent: 'from-emerald-400 to-cyan-400', icon: Clock3, stat: '24/7 ESCROW PULSE' },
+  { id: 'liquidity', title: 'Unified Liquidity Blackhole', subtitle: 'CONCENTRATED FLOW CONTROL', description: 'Bury fragmented balances into a single unified flow. Abstract away chain specifics entirely.', accent: 'from-fuchsia-500 to-cyan-500', icon: Boxes, stat: 'OMNICHAIN' },
+  { id: 'shield', title: 'Silent Gas Shield', subtitle: 'ZERO-FRICTION EXECUTION', description: 'Native USDC gas abstraction. Users never see or pay native gas tokens like ETH or SOL again.', accent: 'from-blue-500 to-indigo-500', icon: ShieldCheck, stat: 'GAS: $0.00' },
+  { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
 ];
 
 export default function App() {
@@ -58,40 +18,79 @@ export default function App() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
+  const [showWalletModal, setShowWalletModal] = useState(false);
 
-  const connectRealWallet = async () => {
-    if (typeof window !== 'undefined' && window.ethereum) {
+  const arcChainId = '0x1A4'; // Arc Testnet Chain ID
+
+  const executeConnection = async (targetProvider) => {
+    try {
+      setIsConnecting(true);
+      setShowWalletModal(false);
+
+      // ১. প্রতিবার জোর করে পারমিশন চাওয়া
       try {
-        setIsConnecting(true);
-        
-        // মেটামাস্ক বা রাব্বি ওয়ালেটের পারমিশন কল করা
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const address = accounts[0];
-        
-        const balanceHex = await window.ethereum.request({
-          method: 'eth_getBalance',
-          params: [address, 'latest']
+        await targetProvider.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }]
         });
-        
-        const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
-        
-        setWalletAddress(address);
-        setBalance(realBalance);
-        setIsConnecting(false);
-
-        confetti({
-          particleCount: 150,
-          spread: 80,
-          origin: { y: 0.3 },
-          colors: ['#22d3ee', '#34d399', '#c084fc']
-        });
-      } catch (error) {
-        console.error(error);
-        setIsConnecting(false);
+      } catch (pErr) {
+        console.log("Permission request bypassed or cancelled");
       }
-    } else {
-      alert('Boss, please open inside MetaMask, Rabby, or Trust Wallet browser!');
+
+      const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
+      const address = accounts[0];
+
+      // ২. জোর করে Arc Network-এ সুইচ করানো
+      try {
+        await targetProvider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: arcChainId }],
+        });
+      } catch (switchError) {
+        if (switchError.code === 4902) {
+          await targetProvider.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: arcChainId,
+              chainName: 'Arc Testnet',
+              rpcUrls: ['https://rpc.testnet.arc.network'],
+              nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 }
+            }],
+          });
+        }
+      }
+
+      // ৩. Arc চেইনের আসল ব্যালেন্স রিড করা
+      const balanceHex = await targetProvider.request({
+        method: 'eth_getBalance',
+        params: [address, 'latest']
+      });
+      
+      setWalletAddress(address);
+      setBalance((parseInt(balanceHex, 16) / 1e18).toFixed(4));
+      setIsConnecting(false);
+
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
+    } catch (error) {
+      alert("Boss, connection cancelled or failed!");
+      setIsConnecting(false);
     }
+  };
+
+  const handleProviderSelect = (walletType) => {
+    if (typeof window === 'undefined' || !window.ethereum) {
+      alert("No Web3 wallet found! Please open inside MetaMask or Rabby browser.");
+      return;
+    }
+    const providers = window.ethereum.providers || [window.ethereum];
+    let chosen = window.ethereum;
+
+    if (walletType === 'rabby') {
+      chosen = providers.find(p => p.isRabby) || window.ethereum;
+    } else if (walletType === 'metamask') {
+      chosen = providers.find(p => p.isMetaMask && !p.isRabby) || window.ethereum;
+    }
+    executeConnection(chosen);
   };
 
   const disconnectWallet = () => {
@@ -112,9 +111,29 @@ export default function App() {
   const ActiveIcon = activeData.icon;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30">
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       
-      <header className="border-b border-white/5 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
+      {/* Wallet Selector Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+            <div className="flex justify-between items-center text-white font-bold">
+              <span>Select Web3 Wallet</span>
+              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button onClick={() => handleProviderSelect('rabby')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex items-center justify-between text-cyan-400 font-bold transition-all">
+                <span>Rabby Wallet</span> <span className="text-xs bg-cyan-500/10 px-2 py-1 rounded">INSTANT</span>
+              </button>
+              <button onClick={() => handleProviderSelect('metamask')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex items-center justify-between text-amber-400 font-bold transition-all">
+                <span>MetaMask</span> <span className="text-xs bg-amber-500/10 px-2 py-1 rounded">POPULAR</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <header className="border-b border-white/5 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-6 h-6 text-cyan-400" />
@@ -122,20 +141,19 @@ export default function App() {
           </div>
           
           {walletAddress ? (
-            <button onClick={disconnectWallet} className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 border border-cyan-500/30 text-cyan-400 flex items-center gap-2 hover:bg-slate-800 transition-all">
+            <button onClick={disconnectWallet} className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 border border-cyan-500/30 text-cyan-400 flex items-center gap-2 hover:bg-rose-950/30 hover:border-rose-500/30 hover:text-rose-400 transition-all">
               {formatAddress(walletAddress)}
-              <LogOut className="w-4 h-4 text-rose-400" />
+              <LogOut className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={connectRealWallet} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition-all">
-              {isConnecting ? 'SYNCING...' : 'CONNECT WALLET'}
+            <button onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)] transition-all">
+              {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
             </button>
           )}
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10">
@@ -211,7 +229,6 @@ export default function App() {
             </div>
           </div>
         </section>
-
       </main>
     </div>
   );
