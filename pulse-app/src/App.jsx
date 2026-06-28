@@ -27,26 +27,18 @@ export default function App() {
       setIsConnecting(true);
       setShowWalletModal(false);
 
-      // ১. প্রতিবার জোর করে পারমিশন চাওয়া
-      try {
-        await targetProvider.request({
-          method: 'wallet_requestPermissions',
-          params: [{ eth_accounts: {} }]
-        });
-      } catch (pErr) {
-        console.log("Permission request bypassed or cancelled");
-      }
-
+      // ১. অ্যাকাউন্ট কানেক্ট করা
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
 
-      // ২. জোর করে Arc Network-এ সুইচ করানো
+      // ২. জোর করে Arc Network-এ সুইচ করানো (এটার জন্যই আগেরবার সমস্যা হচ্ছিল)
       try {
         await targetProvider.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: arcChainId }],
         });
       } catch (switchError) {
+        // যদি Arc Network অ্যাড করা না থাকে, তবে অ্যাড করার পপ-আপ দিবে
         if (switchError.code === 4902) {
           await targetProvider.request({
             method: 'wallet_addEthereumChain',
@@ -57,8 +49,14 @@ export default function App() {
               nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 }
             }],
           });
+        } else {
+          // ইউজার যদি নেটওয়ার্ক সুইচ ক্যানসেল করে দেয়
+          throw new Error("Network switch cancelled by user");
         }
       }
+
+      // নেটওয়ার্ক সুইচ হওয়ার পর ডাটা সিঙ্ক হতে সামান্য সময় দেওয়া
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       // ৩. Arc চেইনের আসল ব্যালেন্স রিড করা
       const balanceHex = await targetProvider.request({
@@ -72,7 +70,8 @@ export default function App() {
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
     } catch (error) {
-      alert("Boss, connection cancelled or failed!");
+      console.error(error);
+      alert("Boss, connection or network switch failed! Please approve the network switch to Arc.");
       setIsConnecting(false);
     }
   };
@@ -169,7 +168,7 @@ export default function App() {
               <div className="flex items-center gap-2 text-emerald-400 font-mono text-sm"><Zap className="w-3 h-3" /> SECURE & LIVE</div>
             </div>
             <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
-              <div className="text-[10px] text-slate-500 font-mono mb-1">REAL BALANCE</div>
+              <div className="text-[10px] text-slate-500 font-mono mb-1">ARC BALANCE</div>
               <div className="text-2xl font-bold text-white font-mono">{balance} <span className="text-cyan-500 text-sm">ARC</span></div>
             </div>
           </div>
