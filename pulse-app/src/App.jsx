@@ -20,71 +20,91 @@ export default function App() {
   const [balance, setBalance] = useState('0.00');
   const [showWalletModal, setShowWalletModal] = useState(false);
 
-  const arcChainId = '0x4cef52'; // Arc Testnet Chain ID (5042002)
+  // অফিশিয়াল Arc Testnet কনফিগারেশন
+  const arcChainIdHex = '0x4cef52'; // 5042002 in hex
 
   const executeConnection = async (targetProvider) => {
     try {
       setIsConnecting(true);
       setShowWalletModal(false);
 
-      // ১. অ্যাকাউন্ট কানেক্ট করা
+      // ১. পারমিশন রিকোয়েস্ট (আপনার কথামতো সুন্দর করে পারমিশন চাইবে)
+      try {
+        await targetProvider.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }]
+        });
+      } catch (permError) {
+        // ইউজার যদি পারমিশন ক্যানসেল করে দেয়
+        console.log("Permission rejected by user");
+        setIsConnecting(false);
+        return;
+      }
+
+      // ২. অ্যাকাউন্ট রিড করা
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
 
-      // ২. বর্তমান নেটওয়ার্ক চেক করা
+      // ৩. বর্তমান নেটওয়ার্ক চেক এবং Arc Testnet-এ ফোর্স সুইচ
       const currentChain = await targetProvider.request({ method: 'eth_chainId' });
       
-      if (currentChain !== arcChainId) {
+      if (currentChain.toLowerCase() !== arcChainIdHex.toLowerCase()) {
         try {
           await targetProvider.request({
             method: 'wallet_switchEthereumChain',
-            params: [{ chainId: arcChainId }],
+            params: [{ chainId: arcChainIdHex }],
           });
         } catch (switchError) {
-          if (switchError.code === 4902) {
+          // যদি Arc Testnet ওয়ালেটে আগে থেকে অ্যাড করা না থাকে, তবে অটো অ্যাড করবে
+          if (switchError.code === 4902 || switchError.code === -32603) {
             await targetProvider.request({
               method: 'wallet_addEthereumChain',
               params: [{
-                chainId: arcChainId,
+                chainId: arcChainIdHex,
                 chainName: 'Arc Testnet',
                 rpcUrls: ['https://rpc.testnet.arc.network'],
-                nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+                nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, // EVM Native Token 18 decimals
                 blockExplorerUrls: ['https://testnet.arcscan.app']
               }],
             });
           } else {
-            throw new Error("Network switch cancelled by user");
+            throw new Error("Network switch cancelled");
           }
         }
       }
 
-      // নেটওয়ার্ক সুইচ হওয়ার পর ব্যালেন্স সিঙ্ক হতে সময় দেওয়া
+      // নেটওয়ার্ক সুইচ হওয়ার পর ব্যালেন্স সিঙ্ক হতে একটু সময় দেওয়া
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // ৩. Arc চেইনের আসল ব্যালেন্স রিড করা
+      // ৪. Arc চেইনের রিয়েল Native USDC ব্যালেন্স রিড করা
       const balanceHex = await targetProvider.request({
         method: 'eth_getBalance',
         params: [address, 'latest']
       });
       
+      // রিয়েল ব্যালেন্স ক্যালকুলেশন
+      const realBalance = (parseInt(balanceHex, 16) / 1e18).toFixed(4);
+      
       setWalletAddress(address);
-      // ব্যালেন্স ক্যালকুলেশন ঠিক করা হয়েছে (6 decimals)
-      setBalance((parseInt(balanceHex, 16) / 1e6).toFixed(2));
+      setBalance(realBalance);
       setIsConnecting(false);
 
+      // কানেক্ট সাকসেস এনিমেশন
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
+      
     } catch (error) {
-      console.error("Connection Error: ", error);
+      console.error("Connection Flow Error: ", error);
       setIsConnecting(false);
-      alert("Boss, the network switch failed! Please approve the network switch to Arc Testnet manually in your wallet.");
+      alert("Boss, Connection cancelled! Please approve the network switch to Arc Testnet. 🚀");
     }
   };
 
   const handleProviderSelect = (walletType) => {
     if (typeof window === 'undefined' || !window.ethereum) {
-      alert("No Web3 wallet found! Please open inside MetaMask or Rabby browser.");
+      alert("Boss, No Web3 wallet detected! Please use MetaMask or Rabby browser.");
       return;
     }
+    
     const providers = window.ethereum.providers || [window.ethereum];
     let chosen = window.ethereum;
 
@@ -93,6 +113,7 @@ export default function App() {
     } else if (walletType === 'metamask') {
       chosen = providers.find(p => p.isMetaMask && !p.isRabby) || window.ethereum;
     }
+    
     executeConnection(chosen);
   };
 
@@ -116,14 +137,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       
+      {/* Wallet Selection Modal */}
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
             <div className="flex justify-between items-center text-white font-bold">
               <span>Select Web3 Wallet</span>
-              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white">✕</button>
+              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white transition-colors">✕</button>
             </div>
-            <div className="space-y-2 pt-2">
+            <div className="space-y-3 pt-2">
               <button onClick={() => handleProviderSelect('rabby')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex items-center justify-between text-cyan-400 font-bold transition-all">
                 <span>Rabby Wallet</span> <span className="text-xs bg-cyan-500/10 px-2 py-1 rounded">INSTANT</span>
               </button>
