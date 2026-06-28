@@ -20,7 +20,7 @@ export default function App() {
   const [balance, setBalance] = useState('0.00');
   const [showWalletModal, setShowWalletModal] = useState(false);
 
-  const arcChainId = '0x1A4'; // Arc Testnet Chain ID
+  const arcChainId = '0x4cef52'; // Arc Testnet Chain ID (5042002)
 
   const executeConnection = async (targetProvider) => {
     try {
@@ -36,26 +36,24 @@ export default function App() {
       
       if (currentChain !== arcChainId) {
         try {
-          // Arc নেটওয়ার্কে সুইচ করার রিকোয়েস্ট
           await targetProvider.request({
             method: 'wallet_switchEthereumChain',
             params: [{ chainId: arcChainId }],
           });
         } catch (switchError) {
-          // যদি চেইন অ্যাড করা না থাকে বা রাব্বি ব্লক করে
-          try {
+          if (switchError.code === 4902) {
             await targetProvider.request({
               method: 'wallet_addEthereumChain',
               params: [{
                 chainId: arcChainId,
                 chainName: 'Arc Testnet',
                 rpcUrls: ['https://rpc.testnet.arc.network'],
-                nativeCurrency: { name: 'ARC', symbol: 'ARC', decimals: 18 }
+                nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+                blockExplorerUrls: ['https://testnet.arcscan.app']
               }],
             });
-          } catch (addError) {
-            console.error("Chain Add Error:", addError);
-            throw new Error("Rabby Security Block");
+          } else {
+            throw new Error("Network switch cancelled by user");
           }
         }
       }
@@ -70,16 +68,15 @@ export default function App() {
       });
       
       setWalletAddress(address);
-      setBalance((parseInt(balanceHex, 16) / 1e18).toFixed(4));
+      // ব্যালেন্স ক্যালকুলেশন ঠিক করা হয়েছে (6 decimals)
+      setBalance((parseInt(balanceHex, 16) / 1e6).toFixed(2));
       setIsConnecting(false);
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 }, colors: ['#22d3ee', '#34d399', '#c084fc'] });
     } catch (error) {
       console.error("Connection Error: ", error);
       setIsConnecting(false);
-      
-      // রাব্বি যদি কোনোভাবেই সুইচ করতে না দেয়, তখন এই মেসেজটা আসবে
-      alert("Boss, Rabby is blocking the auto-switch! Please click on 'Ethereum' inside your Rabby Wallet, change it to 'Arc Testnet' manually, and try again! 🚀");
+      alert("Boss, the network switch failed! Please approve the network switch to Arc Testnet manually in your wallet.");
     }
   };
 
@@ -175,7 +172,7 @@ export default function App() {
             </div>
             <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
               <div className="text-[10px] text-slate-500 font-mono mb-1">ARC BALANCE</div>
-              <div className="text-2xl font-bold text-white font-mono">{balance} <span className="text-cyan-500 text-sm">ARC</span></div>
+              <div className="text-2xl font-bold text-white font-mono">{balance} <span className="text-cyan-500 text-sm">USDC</span></div>
             </div>
           </div>
         </section>
