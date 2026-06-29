@@ -13,7 +13,6 @@ const modules = [
   { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
 ];
 
-// 🔥 আপনার ডিপ্লয় করা আসল স্মার্ট কন্ট্রাক্ট অ্যাড্রেস
 const ESCROW_CONTRACT_ADDRESS = "0xB10A0aF8618CA1f288993B35Dbb72997E15B5B90";
 
 export default function App() {
@@ -24,21 +23,17 @@ export default function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [activeProvider, setActiveProvider] = useState(null);
   
-  // Shield States
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
 
-  // Escrow States
   const [escrowAmount, setEscrowAmount] = useState('');
   const [escrowDuration, setEscrowDuration] = useState('1');
 
-  // Shared Transaction States
   const [isExecuting, setIsExecuting] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
   const arcChainIdHex = '0x4cef52'; 
 
-  // Vercel Build এরর এড়াতে ব্যাকগ্রাউন্ডে Web3 ইঞ্জিন লোড করা
   useEffect(() => {
     if (typeof window !== 'undefined' && !window.ethers) {
       const script = document.createElement('script');
@@ -132,15 +127,12 @@ export default function App() {
     setRecipient('');
     setAmount('');
     setEscrowAmount('');
-  };
-
-  const handleAction = async () => {
+  };  const handleAction = async () => {
     if (!walletAddress || !activeProvider) {
       alert('Boss, please connect your Web3 wallet first!');
       return;
     }
 
-    // ১. Silent Gas Shield ট্রানজেকশন লজিক
     if (activeModule === 'shield') {
       if (!recipient || !amount) {
         alert('Boss, please enter Recipient Address and Amount!');
@@ -166,7 +158,6 @@ export default function App() {
         setIsExecuting(false);
       }
 
-    // ২. Time-Stream Escrow রিয়েল স্মার্ট কন্ট্রাক্ট ট্রানজেকশন লজিক
     } else if (activeModule === 'escrow') {
       if (!escrowAmount || parseFloat(escrowAmount) <= 0) {
         alert('Boss, please enter a valid USDC amount to lock!');
@@ -181,10 +172,7 @@ export default function App() {
       try {
         setIsExecuting(true);
         setTxHash(null);
-
-        // ঘণ্টাকে সেকেন্ডে রূপান্তর (যেমন: 1 Hour = 3600 Seconds)
         const durationInSeconds = parseInt(escrowDuration) * 3600;
-
         const provider = new window.ethers.BrowserProvider(activeProvider);
         const signer = await provider.getSigner();
 
@@ -198,8 +186,6 @@ export default function App() {
         );
 
         const amountInWei = window.ethers.parseEther(escrowAmount.toString());
-
-        // স্মার্ট কন্ট্রাক্টের lockFunds ফাংশন কল করা হচ্ছে
         const tx = await escrowContract.lockFunds(durationInSeconds, {
           value: amountInWei
         });
@@ -230,7 +216,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
-      
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
@@ -328,7 +313,6 @@ export default function App() {
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
             
-            {/* Silent Gas Shield UI */}
             {activeModule === 'shield' && (
               <div className="pt-4 space-y-4 border-t border-white/5 mt-4">
                 <div>
@@ -342,7 +326,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Time-Stream Escrow UI */}
             {activeModule === 'escrow' && (
               <div className="pt-4 space-y-4 border-t border-emerald-500/20 mt-4">
                 <div className="flex flex-col md:flex-row gap-4">
@@ -363,7 +346,6 @@ export default function App() {
               </div>
             )}
 
-            {/* সাকসেস ট্রানজেকশন হ্যাশ লিংক (Shield ও Escrow উভয়ের জন্য) */}
             {txHash && (activeModule === 'shield' || activeModule === 'escrow') && (
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs font-mono break-all mt-4">
                 ✅ Success! TX Hash: <br/>
@@ -376,4 +358,18 @@ export default function App() {
             <div className="pt-4 border-t border-white/5 mt-6">
               <button 
                 onClick={handleAction} 
-                disabled={isEx
+                disabled={isExecuting}
+                className={`w-full md:w-auto px-8 py-3 text-slate-950 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 ${activeModule === 'escrow' ? 'bg-emerald-400 hover:bg-emerald-300 hover:shadow-[0_0_20px_rgba(52,211,153,0.3)]' : 'bg-white hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)]'}`}
+              >
+                <Zap className="w-4 h-4" /> 
+                {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+  
