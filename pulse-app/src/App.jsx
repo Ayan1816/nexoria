@@ -13,7 +13,8 @@ const modules = [
   { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
 ];
 
-const ESCROW_CONTRACT_ADDRESS = "0xB10A0aF8618CA1f288993B35Dbb72997E15B5B90";
+// 🔥 আপনার নতুন V2 স্মার্ট কন্ট্রাক্ট অ্যাড্রেস
+const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
 
 export default function App() {
   const [activeModule, setActiveModule] = useState(modules[0].id);
@@ -25,14 +26,12 @@ export default function App() {
   
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
-
   const [escrowAmount, setEscrowAmount] = useState('');
   const [escrowDuration, setEscrowDuration] = useState('1');
 
-  const [lockedData, setLockedData] = useState({ amount: '0', unlockTime: 0, claimed: false });
-  const [timeLeft, setTimeLeft] = useState('');
-  const [canClaim, setCanClaim] = useState(false);
-
+  // 🔥 নতুন: মাল্টিপল লকের জন্য Array State
+  const [locks, setLocks] = useState([]);
+  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
   const [isExecuting, setIsExecuting] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
@@ -47,18 +46,23 @@ export default function App() {
     }
   }, []);
 
+  // স্মার্ট কন্ট্রাক্ট থেকে সব লক একসাথে খুঁজে আনা
   const fetchLockStatus = async () => {
     if (!walletAddress || !activeProvider || !window.ethers) return;
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const contract = new window.ethers.Contract(
         ESCROW_CONTRACT_ADDRESS,
-        ["function userLocks(address) view returns (uint256 amount, uint256 unlockTime, bool claimed)"],
+        ["function getUserLocks(address) view returns (tuple(uint256 amount, uint256 unlockTime, bool claimed)[])"],
         provider
       );
-      const data = await contract.userLocks(walletAddress);
-      const amt = window.ethers.formatEther(data.amount);
-      setLockedData({ amount: amt, unlockTime: Number(data.unlockTime), claimed: data.claimed });
+      const data = await contract.getUserLocks(walletAddress);
+      const formatted = data.map(d => ({
+        amount: window.ethers.formatEther(d.amount),
+        unlockTime: Number(d.unlockTime),
+        claimed: d.claimed
+      }));
+      setLocks(formatted);
     } catch (e) { console.log("Lock fetch error:", e); }
   };
 
@@ -66,24 +70,13 @@ export default function App() {
     if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
   }, [activeModule, walletAddress, txHash]);
 
+  // লাইভ টাইমার লজিক
   useEffect(() => {
-    if (lockedData.unlockTime === 0 || lockedData.claimed || parseFloat(lockedData.amount) === 0) {
-      setTimeLeft(''); setCanClaim(false); return;
-    }
     const timer = setInterval(() => {
-      const now = Math.floor(Date.now() / 1000);
-      const diff = lockedData.unlockTime - now;
-      if (diff <= 0) {
-        setTimeLeft('Unlocked! Ready to Claim.'); setCanClaim(true); clearInterval(timer);
-      } else {
-        const h = Math.floor(diff / 3600);
-        const m = Math.floor((diff % 3600) / 60);
-        const s = diff % 60;
-        setTimeLeft(`${h}h ${m}m ${s}s remaining`); setCanClaim(false);
-      }
+      setCurrentTime(Math.floor(Date.now() / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [lockedData]);
+  }, []);
 
   const executeConnection = async (targetProvider) => {
     try {
@@ -101,12 +94,7 @@ export default function App() {
           if (switchError.code === 4902 || switchError.code === -32603) {
             await targetProvider.request({
               method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: arcChainIdHex, chainName: 'Arc Testnet',
-                rpcUrls: ['https://rpc.testnet.arc.network'],
-                nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, 
-                blockExplorerUrls: ['https://testnet.arcscan.app']
-              }],
+              params: [{ chainId: arcChainIdHex, chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }],
             });
           } else throw new Error("Cancelled");
         }
@@ -127,9 +115,8 @@ export default function App() {
     executeConnection(chosen);
   };
 
-  const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setActiveProvider(null); setTxHash(null); };
-
-  const handleAction = async () => {
+  const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
+    const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
 
     if (activeModule === 'shield') {
@@ -161,14 +148,15 @@ export default function App() {
     }
   };
 
-  const handleClaim = async () => {
+  // 🔥 নতুন: নির্দিষ্ট লক ক্লেইম করার ফাংশন
+  const handleClaim = async (index) => {
     if (!window.ethers) return;
     try {
-      setIsExecuting(true);
+      setIsExecuting(true); setTxHash(null);
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function claimFunds() external"], signer);
-      const tx = await contract.claimFunds();
+      const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function claimFunds(uint256) external"], signer);
+      const tx = await contract.claimFunds(index);
       setTxHash(tx.hash); setIsExecuting(false);
       confetti({ particleCount: 300, spread: 150, origin: { y: 0.5 }, colors: ['#f59e0b', '#10b981'] });
       setTimeout(async () => {
@@ -177,13 +165,14 @@ export default function App() {
         setBalance((parseInt(b, 16) / 1e18).toFixed(4));
       }, 5000);
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
-  };  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+  };
+
+  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
-      
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
@@ -222,8 +211,6 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        
-        {/* 🔥 আগের সেই সুন্দর প্রিমিয়াম টপ সেকশন আবার ফিরিয়ে আনা হলো */}
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10">
@@ -283,21 +270,37 @@ export default function App() {
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
 
-            {/* 🔥 LIVE ESCROW STATUS DASHBOARD */}
-            {activeModule === 'escrow' && parseFloat(lockedData.amount) > 0 && !lockedData.claimed && (
-              <div className="p-4 bg-emerald-950/30 border border-emerald-500/40 rounded-xl space-y-3 mt-4">
-                <div className="flex justify-between items-center text-emerald-400 font-mono text-sm border-b border-emerald-500/20 pb-2">
-                  <span className="flex items-center gap-2">🔒 CURRENTLY LOCKED:</span>
-                  <span className="text-xl font-bold text-white">{lockedData.amount} USDC</span>
-                </div>
-                <div className="text-xs font-mono text-slate-300 flex justify-between items-center">
-                  <span>⏱️ STATUS: <b className="text-amber-400">{timeLeft}</b></span>
-                  {canClaim && (
-                    <button onClick={handleClaim} disabled={isExecuting} className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-bold rounded-lg animate-pulse hover:scale-105 transition-all">
-                      🎉 CLAIM YOUR {lockedData.amount} USDC
-                    </button>
-                  )}
-                </div>
+            {/* 🔥 MULTIPLE LIVE ESCROW DASHBOARD */}
+            {activeModule === 'escrow' && locks.length > 0 && (
+              <div className="space-y-4 mt-6">
+                {locks.map((lock, index) => {
+                  if (parseFloat(lock.amount) === 0 || lock.claimed) return null;
+                  
+                  const diff = lock.unlockTime - currentTime;
+                  const canClaim = diff <= 0;
+                  const h = Math.floor(Math.max(0, diff) / 3600);
+                  const m = Math.floor((Math.max(0, diff) % 3600) / 60);
+                  const s = Math.max(0, diff) % 60;
+                  const timeLeftStr = canClaim ? 'Ready to Claim!' : `${h}h ${m}m ${s}s remaining`;
+
+                  return (
+                    <div key={index} className="p-4 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-3 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-2 text-[10px] font-mono text-emerald-500/50">ID: #{index}</div>
+                      <div className="flex justify-between items-center text-emerald-400 font-mono text-sm border-b border-emerald-500/10 pb-2">
+                        <span className="flex items-center gap-2">🔒 LOCKED FUND</span>
+                        <span className="text-xl font-bold text-white">{lock.amount} USDC</span>
+                      </div>
+                      <div className="text-xs font-mono text-slate-300 flex justify-between items-center">
+                        <span>⏱️ STATUS: <b className={canClaim ? "text-emerald-400" : "text-amber-400"}>{timeLeftStr}</b></span>
+                        {canClaim && (
+                          <button onClick={() => handleClaim(index)} disabled={isExecuting} className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold rounded-lg hover:scale-105 transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                            🎉 CLAIM
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
             
@@ -315,7 +318,7 @@ export default function App() {
             )}
 
             {activeModule === 'escrow' && (
-              <div className="pt-4 space-y-4 border-t border-emerald-500/20 mt-4">
+              <div className="pt-4 space-y-4 border-t border-emerald-500/20 mt-4 bg-slate-950/50 p-4 rounded-xl">
                 <div className="flex flex-col md:flex-row gap-4">
                   <div className="flex-1">
                     <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Lock className="w-3 h-3"/> AMOUNT TO LOCK (USDC)</label>
@@ -331,33 +334,34 @@ export default function App() {
                     </select>
                   </div>
                 </div>
+                <button 
+                  onClick={handleAction} 
+                  disabled={isExecuting}
+                  className="w-full px-8 py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold rounded-xl disabled:opacity-50 hover:bg-emerald-500 hover:text-slate-950 transition-all flex items-center justify-center gap-2 mt-4"
+                >
+                  <Lock className="w-4 h-4" /> 
+                  {isExecuting ? 'LOCKING FUND...' : `CREATE NEW LOCK`}
+                </button>
               </div>
             )}
 
-            {txHash && (activeModule === 'shield' || activeModule === 'escrow') && (
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs font-mono break-all mt-4">
-                ✅ Success! TX Hash: <br/>
-                <a href={`https://testnet.arcscan.app/tx/${txHash}`} target="_blank" rel="noreferrer" className="underline hover:text-emerald-300 mt-1 inline-block">
-                  {txHash}
-                </a>
+            {txHash && activeModule === 'shield' && (
+              <div className="p-3 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400 text-xs font-mono break-all mt-4">
+                ✅ TX Hash: <a href={`https://testnet.arcscan.app/tx/${txHash}`} target="_blank" rel="noreferrer" className="underline hover:text-cyan-300 mt-1 inline-block">{txHash}</a>
               </div>
             )}
-
-            <div className="pt-4 border-t border-white/5 mt-6">
-              <button 
-                onClick={handleAction} 
-                disabled={isExecuting}
-                className={`w-full md:w-auto px-8 py-3 text-slate-950 font-bold rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 ${activeModule === 'escrow' ? 'bg-emerald-400 hover:bg-emerald-300 hover:shadow-[0_0_20px_rgba(52,211,153,0.3)]' : 'bg-white hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)]'}`}
-              >
-                <Zap className="w-4 h-4" /> 
-                {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
-              </button>
-            </div>
+            
+            {activeModule === 'shield' && (
+              <div className="pt-4 border-t border-white/5 mt-6">
+                <button onClick={handleAction} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-white text-slate-950 font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all flex items-center justify-center gap-2">
+                  <Zap className="w-4 h-4" /> {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
+                </button>
+              </div>
+            )}
           </div>
         </section>
       </main>
     </div>
   );
-}
-
-  
+      }
+                    
