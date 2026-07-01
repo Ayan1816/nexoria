@@ -13,7 +13,6 @@ const modules = [
   { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
 ];
 
-// 🔥 আপনার নতুন V2 স্মার্ট কন্ট্রাক্ট অ্যাড্রেস
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
 
 export default function App() {
@@ -29,7 +28,6 @@ export default function App() {
   const [escrowAmount, setEscrowAmount] = useState('');
   const [escrowDuration, setEscrowDuration] = useState('1');
 
-  // 🔥 নতুন: মাল্টিপল লকের জন্য Array State
   const [locks, setLocks] = useState([]);
   const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
   const [isExecuting, setIsExecuting] = useState(false);
@@ -46,7 +44,6 @@ export default function App() {
     }
   }, []);
 
-  // স্মার্ট কন্ট্রাক্ট থেকে সব লক একসাথে খুঁজে আনা
   const fetchLockStatus = async () => {
     if (!walletAddress || !activeProvider || !window.ethers) return;
     try {
@@ -70,7 +67,6 @@ export default function App() {
     if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
   }, [activeModule, walletAddress, txHash]);
 
-  // লাইভ টাইমার লজিক
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Math.floor(Date.now() / 1000));
@@ -148,7 +144,6 @@ export default function App() {
     }
   };
 
-  // 🔥 নতুন: নির্দিষ্ট লক ক্লেইম করার ফাংশন
   const handleClaim = async (index) => {
     if (!window.ethers) return;
     try {
@@ -270,7 +265,6 @@ export default function App() {
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
 
-            {/* 🔥 MULTIPLE LIVE ESCROW DASHBOARD */}
             {activeModule === 'escrow' && locks.length > 0 && (
               <div className="space-y-4 mt-6">
                 {locks.map((lock, index) => {
@@ -358,10 +352,51 @@ export default function App() {
                 </button>
               </div>
             )}
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-      }
-                    
+
+            {/* 🔥 HOLOGRAPHIC WEB3 PASSPORT MODULE 🔥 */}
+            {activeModule === 'passport' && (
+              <div className="pt-8 mt-6 border-t border-fuchsia-500/20">
+                <div className="relative group w-full max-w-sm mx-auto">
+                  <div className="absolute inset-0 bg-gradient-to-r from-fuchsia-600 to-cyan-600 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition duration-700 animate-pulse"></div>
+                  <div className="relative bg-slate-950/90 backdrop-blur-xl border border-fuchsia-500/50 rounded-2xl p-6 shadow-[0_0_40px_rgba(217,70,239,0.15)] overflow-hidden">
+                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px] pointer-events-none opacity-20"></div>
+                    <div className="flex justify-between items-center mb-6">
+                      <div className="text-fuchsia-400 font-mono text-xs tracking-[0.3em] font-bold">ARC CITIZEN</div>
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-500 flex items-center justify-center border border-white/20 shadow-[0_0_15px_rgba(217,70,239,0.5)]">
+                        <Orbit className="w-5 h-5 text-white animate-spin-slow" />
+                      </div>
+                    </div>
+                    <div className="space-y-5 relative z-10">
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-mono mb-1">UNIVERSAL ID (ADDRESS)</div>
+                        <div className="text-sm md:text-base text-white font-mono bg-fuchsia-500/10 p-3 rounded-lg border border-fuchsia-500/30 break-all text-center tracking-wider">
+                          {walletAddress ? walletAddress : "SYSTEM OFFLINE"}
+                        </div>
+                      </div>
+                      <div className="flex gap-4">
+                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
+                          <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK MESH</div>
+                          <div className="text-xs text-cyan-400 font-bold font-mono">ARC TESTNET</div>
+                        </div>
+                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
+                          <div className="text-[10px] text-slate-500 font-mono mb-1">LIVE STATUS</div>
+                          <div className="text-xs text-emerald-400 font-bold font-mono flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="pt-4 border-t border-fuchsia-500/20 flex justify-between items-end">
+                        <div className="flex gap-1">
+                          {[...Array(14)].map((_, i) => (
+                            <div key={i} className="w-1 bg-fuchsia-500/60 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-fuchsia-500 font-mono tracking-[0.2em] bg-fuchsia-500/10 px-2 py-1 rounded">
+                          SEQ-{walletAddress ? walletAddress.substring(2, 6).toUpperCase() : "0000"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            
