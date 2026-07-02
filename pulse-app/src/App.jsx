@@ -33,7 +33,6 @@ export default function App() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
-  // 🔥 নতুন: AI Agentic Delegate এর জন্য State
   const [aiCommand, setAiCommand] = useState('');
   const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready for intent routing.' }]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
@@ -168,7 +167,6 @@ export default function App() {
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
 
-  // 🔥 নতুন: AI কমান্ড প্রসেস করার ফাংশন
   const handleAiCommand = (cmd) => {
     if (!cmd) return;
     const newLogs = [...aiLogs, { role: 'user', msg: cmd }];
@@ -185,7 +183,7 @@ export default function App() {
   const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
-          return (
+    return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -288,8 +286,6 @@ export default function App() {
             {activeModule === 'delegate' && (
               <div className="pt-6 mt-4 border-t border-cyan-500/20">
                 <div className="bg-slate-950/80 border border-cyan-500/30 rounded-2xl overflow-hidden flex flex-col h-[400px] shadow-[0_0_30px_rgba(34,211,238,0.1)] relative">
-                  
-                  {/* AI Header */}
                   <div className="bg-cyan-950/30 p-3 border-b border-cyan-500/20 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Bot className={`w-5 h-5 text-cyan-400 ${isAiProcessing ? 'animate-bounce' : ''}`} />
@@ -301,7 +297,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* AI Chat Logs */}
                   <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs">
                     {aiLogs.map((log, i) => (
                       <div key={i} className={`flex ${log.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -321,13 +316,11 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* AI Preset Prompts */}
                   <div className="px-4 pb-3 flex gap-2 overflow-x-auto no-scrollbar">
                      <button onClick={() => handleAiCommand("Route 100 USDC to highest yield pool")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">🚀 Route Yield</button>
                      <button onClick={() => handleAiCommand("Analyze portfolio risk and swap exposure")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">📊 Analyze Risk</button>
                   </div>
 
-                  {/* AI Input Area */}
                   <div className="p-3 bg-slate-900/50 border-t border-white/10 flex gap-2">
                     <input 
                       type="text" 
@@ -348,7 +341,7 @@ export default function App() {
                 </div>
               </div>
             )}
-
+                        {/* 🔥 TIME STREAM ESCROW, SHIELD & PASSPORT 🔥 */}
             {activeModule === 'escrow' && locks.length > 0 && (
               <div className="space-y-4 mt-6">
                 {locks.map((lock, index) => {
@@ -437,7 +430,6 @@ export default function App() {
               </div>
             )}
 
-            {/* 🔥 HOLOGRAPHIC WEB3 PASSPORT MODULE 🔥 */}
             {activeModule === 'passport' && (
               <div className="pt-8 mt-6 border-t border-fuchsia-500/20">
                 <div className="relative group w-full max-w-sm mx-auto">
@@ -462,4 +454,32 @@ export default function App() {
                           <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK MESH</div>
                           <div className="text-xs text-cyan-400 font-bold font-mono">ARC TESTNET</div>
                         </div>
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg bo
+                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
+                          <div className="text-[10px] text-slate-500 font-mono mb-1">LIVE STATUS</div>
+                          <div className="text-xs text-emerald-400 font-bold font-mono flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="pt-4 border-t border-fuchsia-500/20 flex justify-between items-end">
+                        <div className="flex gap-1">
+                          {[...Array(14)].map((_, i) => (
+                            <div key={i} className="w-1 bg-fuchsia-500/60 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-fuchsia-500 font-mono tracking-[0.2em] bg-fuchsia-500/10 px-2 py-1 rounded">
+                          SEQ-{walletAddress ? walletAddress.substring(2, 6).toUpperCase() : "0000"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
