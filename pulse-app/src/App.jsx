@@ -33,6 +33,11 @@ export default function App() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [txHash, setTxHash] = useState(null);
 
+  // 🔥 নতুন: AI Agentic Delegate এর জন্য State
+  const [aiCommand, setAiCommand] = useState('');
+  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready for intent routing.' }]);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+
   const arcChainIdHex = '0x4cef52'; 
 
   useEffect(() => {
@@ -162,11 +167,25 @@ export default function App() {
       }, 5000);
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
-        const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+
+  // 🔥 নতুন: AI কমান্ড প্রসেস করার ফাংশন
+  const handleAiCommand = (cmd) => {
+    if (!cmd) return;
+    const newLogs = [...aiLogs, { role: 'user', msg: cmd }];
+    setAiLogs(newLogs);
+    setAiCommand('');
+    setIsAiProcessing(true);
+    
+    setTimeout(() => {
+       setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Executing intent: "${cmd}". Optimal pathways routed successfully on Arc Testnet.` }]);
+       setIsAiProcessing(false);
+    }, 2000);
+  };
+
+  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
-
-  return (
+          return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -264,6 +283,71 @@ export default function App() {
               <h3 className="text-2xl font-bold text-white mb-2">{activeData.title}</h3>
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
+
+            {/* 🔥 AI AGENTIC DELEGATE MODULE 🔥 */}
+            {activeModule === 'delegate' && (
+              <div className="pt-6 mt-4 border-t border-cyan-500/20">
+                <div className="bg-slate-950/80 border border-cyan-500/30 rounded-2xl overflow-hidden flex flex-col h-[400px] shadow-[0_0_30px_rgba(34,211,238,0.1)] relative">
+                  
+                  {/* AI Header */}
+                  <div className="bg-cyan-950/30 p-3 border-b border-cyan-500/20 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bot className={`w-5 h-5 text-cyan-400 ${isAiProcessing ? 'animate-bounce' : ''}`} />
+                      <span className="text-xs font-mono text-cyan-400 font-bold tracking-widest">ARC-AGENT_v1.0</span>
+                    </div>
+                    <div className="flex gap-1 items-center">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span className="text-[10px] text-emerald-500 font-mono">ONLINE</span>
+                    </div>
+                  </div>
+
+                  {/* AI Chat Logs */}
+                  <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs">
+                    {aiLogs.map((log, i) => (
+                      <div key={i} className={`flex ${log.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] p-3 rounded-lg ${log.role === 'user' ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-100' : 'bg-slate-900 border border-white/10 text-emerald-400'}`}>
+                          {log.role === 'system' && <span className="text-slate-500 mr-2">SYS&gt;</span>}
+                          {log.role === 'ai' && <span className="text-cyan-500 mr-2">AI&gt;</span>}
+                          {log.msg}
+                        </div>
+                      </div>
+                    ))}
+                    {isAiProcessing && (
+                      <div className="flex justify-start">
+                        <div className="bg-slate-900 border border-white/10 text-cyan-400 p-3 rounded-lg flex items-center gap-2">
+                          <Cpu className="w-4 h-4 animate-spin" /> Processing intent...
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI Preset Prompts */}
+                  <div className="px-4 pb-3 flex gap-2 overflow-x-auto no-scrollbar">
+                     <button onClick={() => handleAiCommand("Route 100 USDC to highest yield pool")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">🚀 Route Yield</button>
+                     <button onClick={() => handleAiCommand("Analyze portfolio risk and swap exposure")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">📊 Analyze Risk</button>
+                  </div>
+
+                  {/* AI Input Area */}
+                  <div className="p-3 bg-slate-900/50 border-t border-white/10 flex gap-2">
+                    <input 
+                      type="text" 
+                      value={aiCommand} 
+                      onChange={(e) => setAiCommand(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAiCommand(aiCommand)}
+                      placeholder="Enter command intent..." 
+                      className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500/50 transition-all"
+                    />
+                    <button 
+                      onClick={() => handleAiCommand(aiCommand)}
+                      disabled={isAiProcessing || !aiCommand}
+                      className="px-4 bg-cyan-500 text-slate-950 font-bold rounded-lg hover:bg-cyan-400 disabled:opacity-50 transition-colors"
+                    >
+                      SEND
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {activeModule === 'escrow' && locks.length > 0 && (
               <div className="space-y-4 mt-6">
@@ -378,32 +462,4 @@ export default function App() {
                           <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK MESH</div>
                           <div className="text-xs text-cyan-400 font-bold font-mono">ARC TESTNET</div>
                         </div>
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
-                          <div className="text-[10px] text-slate-500 font-mono mb-1">LIVE STATUS</div>
-                          <div className="text-xs text-emerald-400 font-bold font-mono flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="pt-4 border-t border-fuchsia-500/20 flex justify-between items-end">
-                        <div className="flex gap-1">
-                          {[...Array(14)].map((_, i) => (
-                            <div key={i} className="w-1 bg-fuchsia-500/60 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
-                          ))}
-                        </div>
-                        <div className="text-[10px] text-fuchsia-500 font-mono tracking-[0.2em] bg-fuchsia-500/10 px-2 py-1 rounded">
-                          SEQ-{walletAddress ? walletAddress.substring(2, 6).toUpperCase() : "0000"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-                }
+                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg bo
