@@ -112,7 +112,8 @@ export default function App() {
   };
 
   const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
-    const handleAction = async () => {
+
+  const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
 
     if (activeModule === 'shield') {
@@ -161,8 +162,7 @@ export default function App() {
       }, 5000);
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
-
-  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+        const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
@@ -399,4 +399,11 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            
+            )}
+
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+                }
