@@ -34,7 +34,7 @@ export default function App() {
   const [txHash, setTxHash] = useState(null);
 
   const [aiCommand, setAiCommand] = useState('');
-  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready for intent routing.' }]);
+  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready for REAL on-chain execution. (Type: "Send 0.01 to 0x...")' }]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const arcChainIdHex = '0x4cef52'; 
@@ -147,9 +147,7 @@ export default function App() {
         setTimeout(() => { fetchLockStatus(); }, 4000);
       } catch (e) { setIsExecuting(false); alert("Failed!"); }
     }
-  };
-
-  const handleClaim = async (index) => {
+  };  const handleClaim = async (index) => {
     if (!window.ethers) return;
     try {
       setIsExecuting(true); setTxHash(null);
@@ -167,23 +165,55 @@ export default function App() {
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
 
-  const handleAiCommand = (cmd) => {
+  // 🔥 রিয়েল AI ট্রানজেকশন লজিক
+  const handleAiCommand = async (cmd) => {
     if (!cmd) return;
-    const newLogs = [...aiLogs, { role: 'user', msg: cmd }];
-    setAiLogs(newLogs);
+    setAiLogs(prev => [...prev, { role: 'user', msg: cmd }]);
     setAiCommand('');
     setIsAiProcessing(true);
-    
-    setTimeout(() => {
-       setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Executing intent: "${cmd}". Optimal pathways routed successfully on Arc Testnet.` }]);
-       setIsAiProcessing(false);
-    }, 2000);
+
+    const sendRegex = /(?:send|transfer|route)\s+([\d.]+)\s*(?:usdc|eth)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
+    const match = cmd.match(sendRegex);
+
+    if (match) {
+      const amountStr = match[1];
+      const toAddress = match[2];
+
+      setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent matched: Transfer ${amountStr} USDC to ${toAddress.substring(0, 6)}... Requesting signature...` }]);
+
+      if (!walletAddress || !activeProvider) {
+         setIsAiProcessing(false);
+         setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Wallet not connected.` }]);
+         return;
+      }
+
+      try {
+        const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
+        const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
+        
+        setAiLogs(prev => [...prev, { role: 'ai', msg: `✅ On-chain Execution Successful! TX: ${tx}` }]);
+        confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+        
+        setTimeout(async () => {
+          const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
+          setBalance((parseInt(b, 16) / 1e18).toFixed(4));
+        }, 5000);
+      } catch(e) {
+        setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Execution failed or rejected by user.` }]);
+      }
+    } else {
+       setTimeout(() => {
+         setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent received: "${cmd}". (Note: For REAL transfer, type "Send [amount] to [0xAddress]")` }]);
+       }, 1500);
+    }
+    setIsAiProcessing(false);
   };
 
   const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
-    return (
+
+  return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -221,8 +251,7 @@ export default function App() {
           )}
         </div>
       </header>
-
-      <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+            <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10">
@@ -316,18 +345,13 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="px-4 pb-3 flex gap-2 overflow-x-auto no-scrollbar">
-                     <button onClick={() => handleAiCommand("Route 100 USDC to highest yield pool")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">🚀 Route Yield</button>
-                     <button onClick={() => handleAiCommand("Analyze portfolio risk and swap exposure")} className="text-[10px] whitespace-nowrap px-3 py-1.5 bg-slate-900 border border-white/10 rounded-full hover:border-cyan-500/50 text-slate-300 transition-colors">📊 Analyze Risk</button>
-                  </div>
-
                   <div className="p-3 bg-slate-900/50 border-t border-white/10 flex gap-2">
                     <input 
                       type="text" 
                       value={aiCommand} 
                       onChange={(e) => setAiCommand(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleAiCommand(aiCommand)}
-                      placeholder="Enter command intent..." 
+                      placeholder='Try: "Send 0.01 to 0x..."' 
                       className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500/50 transition-all"
                     />
                     <button 
@@ -341,7 +365,7 @@ export default function App() {
                 </div>
               </div>
             )}
-                        {/* 🔥 TIME STREAM ESCROW, SHIELD & PASSPORT 🔥 */}
+
             {activeModule === 'escrow' && locks.length > 0 && (
               <div className="space-y-4 mt-6">
                 {locks.map((lock, index) => {
@@ -483,3 +507,5 @@ export default function App() {
     </div>
   );
 }
+
+  
