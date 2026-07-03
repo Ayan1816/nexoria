@@ -14,8 +14,8 @@ const modules = [
 ];
 
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
-// 🔥 EURC Token Contract Address on Arc Testnet
-const EURC_CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000"; 
+// 🔥 Arc Testnet Real EURC Contract Address (From Docs)
+const EURC_CONTRACT_ADDRESS = "0x89B5855Aa3bE2F677cD6303Cec089B5F319D72a"; 
 
 export default function App() {
   const [activeModule, setActiveModule] = useState(modules[0].id);
@@ -106,8 +106,9 @@ export default function App() {
       const balHex = await targetProvider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
       setBalance((parseInt(balHex, 16) / 1e18).toFixed(4)); 
       
+      // 🔥 Real EURC Token Balance Fetching
       try {
-        if (window.ethers && EURC_CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000") {
+        if (window.ethers) {
           const provider = new window.ethers.BrowserProvider(targetProvider);
           const eurcContract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
           const eurcBal = await eurcContract.balanceOf(address);
@@ -116,7 +117,7 @@ export default function App() {
         } else {
           setEurcBalance('0.00'); 
         }
-      } catch (e) { console.log("EURC Fetch Error"); }
+      } catch (e) { console.log("EURC Fetch Error", e); }
 
       setWalletAddress(address); setIsConnecting(false);
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
