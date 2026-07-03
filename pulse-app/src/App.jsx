@@ -14,7 +14,6 @@ const modules = [
 ];
 
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
-// 🔥 Arc Testnet Real EURC Contract Address (From Docs)
 const EURC_CONTRACT_ADDRESS = "0x89B5855Aa3bE2F677cD6303Cec089B5F319D72a"; 
 
 export default function App() {
@@ -50,7 +49,8 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, []);
-    const fetchLockStatus = async () => {
+
+  const fetchLockStatus = async () => {
     if (!walletAddress || !activeProvider || !window.ethers) return;
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
@@ -68,8 +68,7 @@ export default function App() {
       setLocks(formatted);
     } catch (e) { console.log("Lock fetch error:", e); }
   };
-
-  useEffect(() => {
+    useEffect(() => {
     if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
   }, [activeModule, walletAddress, txHash]);
 
@@ -102,11 +101,9 @@ export default function App() {
         }
       }
       await new Promise(r => setTimeout(r, 1500));
-      
       const balHex = await targetProvider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
       setBalance((parseInt(balHex, 16) / 1e18).toFixed(4)); 
       
-      // 🔥 Real EURC Token Balance Fetching
       try {
         if (window.ethers) {
           const provider = new window.ethers.BrowserProvider(targetProvider);
@@ -114,16 +111,15 @@ export default function App() {
           const eurcBal = await eurcContract.balanceOf(address);
           const decimals = await eurcContract.decimals();
           setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
-        } else {
-          setEurcBalance('0.00'); 
         }
-      } catch (e) { console.log("EURC Fetch Error", e); }
+      } catch (e) { console.log("EURC Error", e); }
 
       setWalletAddress(address); setIsConnecting(false);
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); }
   };
-    const handleProviderSelect = (type) => {
+
+  const handleProviderSelect = (type) => {
     if (!window.ethereum) return alert("No wallet!");
     const provs = window.ethereum.providers || [window.ethereum];
     let chosen = window.ethereum;
@@ -133,10 +129,8 @@ export default function App() {
   };
 
   const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
-
-  const handleAction = async () => {
+    const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
-
     if (activeModule === 'shield') {
       if (!recipient || !amount) return alert('Fill fields!');
       try {
@@ -149,7 +143,6 @@ export default function App() {
           setBalance((parseInt(b, 16) / 1e18).toFixed(4));
         }, 5000);
       } catch (e) { setIsExecuting(false); }
-
     } else if (activeModule === 'escrow') {
       if (!escrowAmount || parseFloat(escrowAmount) <= 0) return alert('Enter valid amount!');
       if (!window.ethers) return alert('Engine loading, click again!');
@@ -183,27 +176,23 @@ export default function App() {
       }, 5000);
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
-    const handleAiCommand = async (cmd) => {
+
+  const handleAiCommand = async (cmd) => {
     if (!cmd) return;
     setAiLogs(prev => [...prev, { role: 'user', msg: cmd }]);
     setAiCommand('');
     setIsAiProcessing(true);
-
     const sendRegex = /(?:send|transfer|route)\s+([\d.]+)\s*(?:usdc|eth)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
     const match = cmd.match(sendRegex);
-
     if (match) {
       const amountStr = match[1];
       const toAddress = match[2];
-
       setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent matched: Transfer ${amountStr} USDC to ${toAddress.substring(0, 6)}... Requesting signature...` }]);
-
       if (!walletAddress || !activeProvider) {
          setIsAiProcessing(false);
          setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Wallet not connected.` }]);
          return;
       }
-
       try {
         const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
         const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
@@ -223,8 +212,7 @@ export default function App() {
     }
     setIsAiProcessing(false);
   };
-
-  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+    const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
@@ -288,7 +276,8 @@ export default function App() {
             </div>
           </div>
         </section>
-                <section>
+
+        <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono">Choose a control surface</h2>
             <Gauge className="w-4 h-4 text-cyan-500" />
@@ -312,8 +301,7 @@ export default function App() {
             })}
           </div>
         </section>
-
-        <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 relative overflow-hidden">
+                <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 relative overflow-hidden">
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-slate-400 font-mono"><Sparkles className="w-3 h-3 text-cyan-400" /> Active Module</div>
