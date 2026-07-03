@@ -14,7 +14,7 @@ const modules = [
 ];
 
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
-const EURC_CONTRACT_ADDRESS = "0x89B5855Aa3bE2F677cD6303Cec089B5F319D72a"; 
+const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
 
 export default function App() {
   const [activeModule, setActiveModule] = useState(modules[0].id);
