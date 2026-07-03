@@ -14,7 +14,7 @@ const modules = [
 ];
 
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
-const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
+const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a"; 
 
 export default function App() {
   const [activeModule, setActiveModule] = useState(modules[0].id);
@@ -27,6 +27,7 @@ export default function App() {
   
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
+  const [selectedToken, setSelectedToken] = useState('USDC');
   const [escrowAmount, setEscrowAmount] = useState('');
   const [escrowDuration, setEscrowDuration] = useState('1');
 
@@ -36,7 +37,7 @@ export default function App() {
   const [txHash, setTxHash] = useState(null);
 
   const [aiCommand, setAiCommand] = useState('');
-  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready for REAL on-chain execution. (Type: "Send 0.01 to 0x...")' }]);
+  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready. (Type: "Send 1 EURC to 0x..." or "Send 1 USDC to 0x...")' }]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
   const arcChainIdHex = '0x4cef52'; 
@@ -49,8 +50,7 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, []);
-
-  const fetchLockStatus = async () => {
+    const fetchLockStatus = async () => {
     if (!walletAddress || !activeProvider || !window.ethers) return;
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
@@ -68,7 +68,8 @@ export default function App() {
       setLocks(formatted);
     } catch (e) { console.log("Lock fetch error:", e); }
   };
-    useEffect(() => {
+
+  useEffect(() => {
     if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
   }, [activeModule, walletAddress, txHash]);
 
@@ -118,8 +119,7 @@ export default function App() {
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); }
   };
-
-  const handleProviderSelect = (type) => {
+    const handleProviderSelect = (type) => {
     if (!window.ethereum) return alert("No wallet!");
     const provs = window.ethereum.providers || [window.ethereum];
     let chosen = window.ethereum;
@@ -129,20 +129,31 @@ export default function App() {
   };
 
   const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
-    const handleAction = async () => {
+
+  const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
     if (activeModule === 'shield') {
       if (!recipient || !amount) return alert('Fill fields!');
       try {
         setIsExecuting(true); setTxHash(null);
-        const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
-        const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: recipient, value: '0x' + val }] });
-        setTxHash(tx); setIsExecuting(false); confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+        if (selectedToken === 'USDC') {
+          const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
+          const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: recipient, value: '0x' + val }] });
+          setTxHash(tx);
+        } else {
+          const provider = new window.ethers.BrowserProvider(activeProvider);
+          const signer = await provider.getSigner();
+          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
+          const decimals = await contract.decimals();
+          const tx = await contract.transfer(recipient, window.ethers.parseUnits(amount, decimals));
+          setTxHash(tx.hash);
+        }
+        setIsExecuting(false); confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
         setTimeout(async () => {
           const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
           setBalance((parseInt(b, 16) / 1e18).toFixed(4));
         }, 5000);
-      } catch (e) { setIsExecuting(false); }
+      } catch (e) { setIsExecuting(false); alert("Transaction failed!"); }
     } else if (activeModule === 'escrow') {
       if (!escrowAmount || parseFloat(escrowAmount) <= 0) return alert('Enter valid amount!');
       if (!window.ethers) return alert('Engine loading, click again!');
@@ -174,29 +185,39 @@ export default function App() {
         const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
         setBalance((parseInt(b, 16) / 1e18).toFixed(4));
       }, 5000);
-    } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
+    } catch (e) { setIsExecuting(false); alert("Claim failed!"); }
   };
-
-  const handleAiCommand = async (cmd) => {
+    const handleAiCommand = async (cmd) => {
     if (!cmd) return;
     setAiLogs(prev => [...prev, { role: 'user', msg: cmd }]);
     setAiCommand('');
     setIsAiProcessing(true);
-    const sendRegex = /(?:send|transfer|route)\s+([\d.]+)\s*(?:usdc|eth)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
+    const sendRegex = /(?:send|transfer|route)\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
     const match = cmd.match(sendRegex);
     if (match) {
       const amountStr = match[1];
-      const toAddress = match[2];
-      setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent matched: Transfer ${amountStr} USDC to ${toAddress.substring(0, 6)}... Requesting signature...` }]);
+      const tokenSymbol = match[2] ? match[2].toUpperCase() : 'USDC';
+      const toAddress = match[3];
+      setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent matched: Transfer ${amountStr} ${tokenSymbol} to ${toAddress.substring(0, 6)}... Requesting signature...` }]);
       if (!walletAddress || !activeProvider) {
          setIsAiProcessing(false);
          setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Wallet not connected.` }]);
          return;
       }
       try {
-        const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
-        const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
-        setAiLogs(prev => [...prev, { role: 'ai', msg: `✅ On-chain Execution Successful! TX: ${tx}` }]);
+        let txHashRes;
+        if (tokenSymbol === 'USDC') {
+          const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
+          txHashRes = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
+        } else {
+          const provider = new window.ethers.BrowserProvider(activeProvider);
+          const signer = await provider.getSigner();
+          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
+          const decimals = await contract.decimals();
+          const tx = await contract.transfer(toAddress, window.ethers.parseUnits(amountStr, decimals));
+          txHashRes = tx.hash;
+        }
+        setAiLogs(prev => [...prev, { role: 'ai', msg: `✅ On-chain Execution Successful! TX: ${txHashRes}` }]);
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
         setTimeout(async () => {
           const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
@@ -207,12 +228,13 @@ export default function App() {
       }
     } else {
        setTimeout(() => {
-         setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent received: "${cmd}". (Note: For REAL transfer, type "Send [amount] to [0xAddress]")` }]);
+         setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent received: "${cmd}". (Note: For REAL transfer, type "Send [amount] [USDC/EURC] to [0xAddress]")` }]);
        }, 1500);
     }
     setIsAiProcessing(false);
   };
-    const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+
+  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
@@ -270,9 +292,16 @@ export default function App() {
               <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK STATUS</div>
               <div className="flex items-center gap-2 text-emerald-400 font-mono text-sm"><Zap className="w-3 h-3" /> SECURE & LIVE</div>
             </div>
-            <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
-              <div className="text-[10px] text-slate-500 font-mono mb-1">ARC BALANCE</div>
-              <div className="text-2xl font-bold text-white font-mono">{balance} <span className="text-cyan-500 text-sm">USDC</span></div>
+            <div className="bg-slate-950 rounded-xl p-4 border border-white/5 space-y-2">
+              <div className="text-[10px] text-slate-500 font-mono">OMNI-PORTFOLIO BALANCES</div>
+              <div className="flex justify-between items-center border-b border-white/5 pb-1">
+                <span className="text-xs font-mono text-cyan-400">USDC</span>
+                <span className="text-lg font-bold text-white font-mono">{balance}</span>
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                <span className="text-xs font-mono text-fuchsia-400">EURC</span>
+                <span className="text-lg font-bold text-white font-mono">{eurcBalance}</span>
+              </div>
             </div>
           </div>
         </section>
@@ -383,7 +412,7 @@ export default function App() {
                       value={aiCommand} 
                       onChange={(e) => setAiCommand(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleAiCommand(aiCommand)}
-                      placeholder='Try: "Send 0.01 to 0x..."' 
+                      placeholder='Try: "Send 1 EURC to 0x..."' 
                       className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500/50 transition-all"
                     />
                     <button 
@@ -431,13 +460,22 @@ export default function App() {
             
             {activeModule === 'shield' && (
               <div className="pt-4 space-y-4 border-t border-white/5 mt-4">
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-slate-500 font-mono mb-2">SELECT ASSET</label>
+                    <select value={selectedToken} onChange={e => setSelectedToken(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all">
+                      <option value="USDC">USDC (Native)</option>
+                      <option value="EURC">EURC (Euro Token)</option>
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-slate-500 font-mono mb-2">AMOUNT ({selectedToken})</label>
+                    <input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all" />
+                  </div>
+                </div>
                 <div>
                   <label className="block text-[10px] text-slate-500 font-mono mb-2">RECIPIENT ADDRESS</label>
                   <input type="text" placeholder="0x..." value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all" />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-slate-500 font-mono mb-2">AMOUNT (USDC)</label>
-                  <input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all" />
                 </div>
               </div>
             )}
@@ -479,7 +517,7 @@ export default function App() {
             {activeModule === 'shield' && (
               <div className="pt-4 border-t border-white/5 mt-6">
                 <button onClick={handleAction} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-white text-slate-950 font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all flex items-center justify-center gap-2">
-                  <Zap className="w-4 h-4" /> {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
+                  <Zap className="w-4 h-4" /> {isExecuting ? 'EXECUTING ONCHAIN...' : `SEND ${selectedToken}`}
                 </button>
               </div>
             )}
