@@ -14,12 +14,15 @@ const modules = [
 ];
 
 const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
+// 🔥 বস, নিচে EURC এর আসল অ্যাড্রেস বসাতে পারবেন। আপাতত ডেমো দেওয়া আছে।
+const EURC_CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000"; 
 
 export default function App() {
   const [activeModule, setActiveModule] = useState(modules[0].id);
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletAddress, setWalletAddress] = useState(null);
   const [balance, setBalance] = useState('0.00');
+  const [eurcBalance, setEurcBalance] = useState('0.00'); // 🔥 EURC Balance State
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [activeProvider, setActiveProvider] = useState(null);
   
@@ -77,8 +80,7 @@ export default function App() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
-
-  const executeConnection = async (targetProvider) => {
+    const executeConnection = async (targetProvider) => {
     try {
       setIsConnecting(true); setShowWalletModal(false); setActiveProvider(targetProvider); 
       try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } 
@@ -100,8 +102,25 @@ export default function App() {
         }
       }
       await new Promise(r => setTimeout(r, 1500));
+      
+      // Fetch Native USDC
       const balHex = await targetProvider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
-      setWalletAddress(address); setBalance((parseInt(balHex, 16) / 1e18).toFixed(4)); setIsConnecting(false);
+      setBalance((parseInt(balHex, 16) / 1e18).toFixed(4)); 
+      
+      // 🔥 Fetch EURC Token Balance
+      try {
+        if (window.ethers && EURC_CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000") {
+          const provider = new window.ethers.BrowserProvider(targetProvider);
+          const eurcContract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
+          const eurcBal = await eurcContract.balanceOf(address);
+          const decimals = await eurcContract.decimals();
+          setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
+        } else {
+          setEurcBalance('0.00'); // Show 0 if address not updated yet
+        }
+      } catch (e) { console.log("EURC Fetch Error"); }
+
+      setWalletAddress(address); setIsConnecting(false);
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); }
   };
@@ -115,7 +134,7 @@ export default function App() {
     executeConnection(chosen);
   };
 
-  const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
+  const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
 
   const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
@@ -147,7 +166,9 @@ export default function App() {
         setTimeout(() => { fetchLockStatus(); }, 4000);
       } catch (e) { setIsExecuting(false); alert("Failed!"); }
     }
-  };  const handleClaim = async (index) => {
+  };
+
+  const handleClaim = async (index) => {
     if (!window.ethers) return;
     try {
       setIsExecuting(true); setTxHash(null);
@@ -165,7 +186,6 @@ export default function App() {
     } catch (e) { setIsExecuting(false); alert("Claim failed or time not over yet!"); }
   };
 
-  // 🔥 রিয়েল AI ট্রানজেকশন লজিক
   const handleAiCommand = async (cmd) => {
     if (!cmd) return;
     setAiLogs(prev => [...prev, { role: 'user', msg: cmd }]);
@@ -190,10 +210,8 @@ export default function App() {
       try {
         const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
         const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
-        
         setAiLogs(prev => [...prev, { role: 'ai', msg: `✅ On-chain Execution Successful! TX: ${tx}` }]);
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
-        
         setTimeout(async () => {
           const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
           setBalance((parseInt(b, 16) / 1e18).toFixed(4));
@@ -208,8 +226,7 @@ export default function App() {
     }
     setIsAiProcessing(false);
   };
-
-  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+    const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
@@ -251,7 +268,8 @@ export default function App() {
           )}
         </div>
       </header>
-            <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+
+      <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10">
@@ -310,6 +328,56 @@ export default function App() {
               <h3 className="text-2xl font-bold text-white mb-2">{activeData.title}</h3>
               <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
             </div>
+
+            {/* 🔥 UNIFIED LIQUIDITY BLACKHOLE MODULE 🔥 */}
+            {activeModule === 'liquidity' && (
+              <div className="pt-6 mt-4 border-t border-fuchsia-500/20">
+                <div className="relative bg-slate-950 rounded-2xl border border-fuchsia-500/30 p-8 overflow-hidden text-center shadow-[0_0_30px_rgba(217,70,239,0.1)]">
+                  {/* Blackhole Animation Effect */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-fuchsia-600/20 rounded-full blur-[80px] animate-pulse pointer-events-none"></div>
+                  
+                  <h3 className="text-lg md:text-xl font-bold text-white mb-8 relative z-10 tracking-wider">OMNIMATRIX LIQUIDITY POOL</h3>
+                  
+                  <div className="flex flex-col md:flex-row justify-center items-center gap-6 relative z-10">
+                    {/* USDC Card */}
+                    <div className="bg-slate-900/80 backdrop-blur-sm border border-cyan-500/30 p-5 rounded-xl w-full md:w-48 shadow-[0_0_15px_rgba(34,211,238,0.2)] hover:scale-105 transition-transform">
+                      <div className="flex justify-center mb-3">
+                        <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center border border-cyan-500/50">
+                          <Globe2 className="w-5 h-5 text-cyan-400" />
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mb-1 tracking-widest">NATIVE USDC</div>
+                      <div className="text-2xl font-bold text-cyan-400 font-mono">{balance}</div>
+                    </div>
+
+                    {/* Blackhole Center Icon */}
+                    <div className="hidden md:flex">
+                      <Orbit className="w-8 h-8 text-fuchsia-500 animate-spin-slow opacity-50" />
+                    </div>
+
+                    {/* EURC Card */}
+                    <div className="bg-slate-900/80 backdrop-blur-sm border border-fuchsia-500/30 p-5 rounded-xl w-full md:w-48 shadow-[0_0_15px_rgba(217,70,239,0.2)] hover:scale-105 transition-transform">
+                      <div className="flex justify-center mb-3">
+                        <div className="w-10 h-10 bg-fuchsia-500/20 rounded-full flex items-center justify-center border border-fuchsia-500/50">
+                          <Wallet2 className="w-5 h-5 text-fuchsia-400" />
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mb-1 tracking-widest">EURO COIN (EURC)</div>
+                      <div className="text-2xl font-bold text-fuchsia-400 font-mono">{eurcBalance}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-10 relative z-10">
+                    <button className="px-8 py-3 bg-gradient-to-r from-fuchsia-500 to-cyan-500 text-slate-950 font-bold rounded-xl hover:scale-105 transition-all shadow-[0_0_20px_rgba(217,70,239,0.4)] flex items-center gap-2 mx-auto">
+                      <Boxes className="w-5 h-5" /> SYNC LIQUIDITY MESH
+                    </button>
+                    <p className="text-[10px] text-slate-500 font-mono mt-4 text-center max-w-sm mx-auto">
+                      Warning: Syncing unifies fragmented balances across supported Layer-2 fabrics.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 🔥 AI AGENTIC DELEGATE MODULE 🔥 */}
             {activeModule === 'delegate' && (
@@ -447,65 +515,4 @@ export default function App() {
             )}
             
             {activeModule === 'shield' && (
-              <div className="pt-4 border-t border-white/5 mt-6">
-                <button onClick={handleAction} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-white text-slate-950 font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all flex items-center justify-center gap-2">
-                  <Zap className="w-4 h-4" /> {isExecuting ? 'EXECUTING ONCHAIN...' : `EXECUTE ${activeData.title.split(' ')[0].toUpperCase()}`}
-                </button>
-              </div>
-            )}
-
-            {activeModule === 'passport' && (
-              <div className="pt-8 mt-6 border-t border-fuchsia-500/20">
-                <div className="relative group w-full max-w-sm mx-auto">
-                  <div className="absolute inset-0 bg-gradient-to-r from-fuchsia-600 to-cyan-600 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition duration-700 animate-pulse"></div>
-                  <div className="relative bg-slate-950/90 backdrop-blur-xl border border-fuchsia-500/50 rounded-2xl p-6 shadow-[0_0_40px_rgba(217,70,239,0.15)] overflow-hidden">
-                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px] pointer-events-none opacity-20"></div>
-                    <div className="flex justify-between items-center mb-6">
-                      <div className="text-fuchsia-400 font-mono text-xs tracking-[0.3em] font-bold">ARC CITIZEN</div>
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-500 flex items-center justify-center border border-white/20 shadow-[0_0_15px_rgba(217,70,239,0.5)]">
-                        <Orbit className="w-5 h-5 text-white animate-spin-slow" />
-                      </div>
-                    </div>
-                    <div className="space-y-5 relative z-10">
-                      <div>
-                        <div className="text-[10px] text-slate-500 font-mono mb-1">UNIVERSAL ID (ADDRESS)</div>
-                        <div className="text-sm md:text-base text-white font-mono bg-fuchsia-500/10 p-3 rounded-lg border border-fuchsia-500/30 break-all text-center tracking-wider">
-                          {walletAddress ? walletAddress : "SYSTEM OFFLINE"}
-                        </div>
-                      </div>
-                      <div className="flex gap-4">
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
-                          <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK MESH</div>
-                          <div className="text-xs text-cyan-400 font-bold font-mono">ARC TESTNET</div>
-                        </div>
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
-                          <div className="text-[10px] text-slate-500 font-mono mb-1">LIVE STATUS</div>
-                          <div className="text-xs text-emerald-400 font-bold font-mono flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="pt-4 border-t border-fuchsia-500/20 flex justify-between items-end">
-                        <div className="flex gap-1">
-                          {[...Array(14)].map((_, i) => (
-                            <div key={i} className="w-1 bg-fuchsia-500/60 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
-                          ))}
-                        </div>
-                        <div className="text-[10px] text-fuchsia-500 font-mono tracking-[0.2em] bg-fuchsia-500/10 px-2 py-1 rounded">
-                          SEQ-{walletAddress ? walletAddress.substring(2, 6).toUpperCase() : "0000"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-  
+              <div className="pt-4 border-t bo
