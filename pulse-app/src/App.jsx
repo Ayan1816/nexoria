@@ -1,22 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import {
-  ArrowRight, Bot, Boxes, Clock3, Cpu, Gauge, Globe2,
-  Orbit, ShieldCheck, Sparkles, Wallet2, Zap, LogOut, Lock, Timer, Unlock
+  ArrowRight, ShieldCheck, Sparkles, Wallet2, Zap, LogOut, Orbit, Globe2,
+  Sun, Moon, History, PenTool, Copy, CheckCircle
 } from 'lucide-react';
 
 const modules = [
-  { id: 'delegate', title: 'AI Agentic Delegate', subtitle: 'AUTONOMOUS POLICY ROUTING', description: 'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: '92% SIGNAL CLARITY' },
-  { id: 'escrow', title: 'Time-Stream Escrow', subtitle: 'PROGRAMMABLE MILESTONE TRUST', description: 'Lock funds securely in a time-locked smart contract. Watch live countdown and claim funds once time expires.', accent: 'from-emerald-400 to-cyan-400', icon: Clock3, stat: '24/7 ESCROW PULSE' },
-  { id: 'liquidity', title: 'Unified Liquidity Blackhole', subtitle: 'CONCENTRATED FLOW CONTROL', description: 'Bury fragmented balances into a single unified flow. Abstract away chain specifics entirely.', accent: 'from-fuchsia-500 to-cyan-500', icon: Boxes, stat: 'OMNICHAIN' },
-  { id: 'shield', title: 'Silent Gas Shield', subtitle: 'ZERO-FRICTION EXECUTION', description: 'Native USDC gas abstraction. Users never see or pay native gas tokens like ETH or SOL again. Test Real Transaction Here.', accent: 'from-blue-500 to-indigo-500', icon: ShieldCheck, stat: 'GAS: $0.00' },
-  { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
+  { id: 'shield', title: 'Asset Transfer Protocol', subtitle: 'ZERO-FRICTION EXECUTION', description: 'Send Native USDC or EURC seamlessly across the Arc Testnet ecosystem.', accent: 'from-blue-500 to-indigo-500', icon: ShieldCheck, stat: 'SECURE' },
+  { id: 'history', title: 'Transaction Ledger', subtitle: 'ON-CHAIN RECEIPTS', description: 'Real-time history of all your executed transactions and transfers in this session.', accent: 'from-emerald-400 to-cyan-400', icon: History, stat: 'LIVE SYNC' },
+  { id: 'sign', title: 'Web3 Authenticator', subtitle: 'CRYPTOGRAPHIC PROOF', description: 'Sign custom messages using your wallet private key to prove identity and ownership.', accent: 'from-amber-400 to-orange-500', icon: PenTool, stat: 'NO GAS' },
+  { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'VERIFIED' }
 ];
 
-const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
 const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a"; 
+const arcChainIdHex = '0x4cef52';
 
 export default function App() {
+  const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(modules[0].id);
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletAddress, setWalletAddress] = useState(null);
@@ -28,19 +28,12 @@ export default function App() {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [selectedToken, setSelectedToken] = useState('USDC');
-  const [escrowAmount, setEscrowAmount] = useState('');
-  const [escrowDuration, setEscrowDuration] = useState('1');
-
-  const [locks, setLocks] = useState([]);
-  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
   const [isExecuting, setIsExecuting] = useState(false);
-  const [txHash, setTxHash] = useState(null);
-
-  const [aiCommand, setAiCommand] = useState('');
-  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready. (Type: "Send 1 EURC to 0x..." or "Send 1 USDC to 0x...")' }]);
-  const [isAiProcessing, setIsAiProcessing] = useState(false);
-
-  const arcChainIdHex = '0x4cef52'; 
+  
+  // New Features States
+  const [txHistory, setTxHistory] = useState([]);
+  const [signMessage, setSignMessage] = useState('');
+  const [signature, setSignature] = useState('');
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !window.ethers) {
@@ -50,37 +43,7 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, []);
-    const fetchLockStatus = async () => {
-    if (!walletAddress || !activeProvider || !window.ethers) return;
-    try {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const contract = new window.ethers.Contract(
-        ESCROW_CONTRACT_ADDRESS,
-        ["function getUserLocks(address) view returns (tuple(uint256 amount, uint256 unlockTime, bool claimed)[])"],
-        provider
-      );
-      const data = await contract.getUserLocks(walletAddress);
-      const formatted = data.map(d => ({
-        amount: window.ethers.formatEther(d.amount),
-        unlockTime: Number(d.unlockTime),
-        claimed: d.claimed
-      }));
-      setLocks(formatted);
-    } catch (e) { console.log("Lock fetch error:", e); }
-  };
-
-  useEffect(() => {
-    if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
-  }, [activeModule, walletAddress, txHash]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(Math.floor(Date.now() / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const executeConnection = async (targetProvider) => {
+    const executeConnection = async (targetProvider) => {
     try {
       setIsConnecting(true); setShowWalletModal(false); setActiveProvider(targetProvider); 
       try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } 
@@ -119,7 +82,8 @@ export default function App() {
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); }
   };
-    const handleProviderSelect = (type) => {
+
+  const handleProviderSelect = (type) => {
     if (!window.ethereum) return alert("No wallet!");
     const provs = window.ethereum.providers || [window.ethereum];
     let chosen = window.ethereum;
@@ -128,118 +92,66 @@ export default function App() {
     executeConnection(chosen);
   };
 
-  const disconnectWallet = () => { setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); setActiveProvider(null); setTxHash(null); setLocks([]); };
-
-  const handleAction = async () => {
+  const disconnectWallet = () => { 
+    setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); 
+    setActiveProvider(null); setTxHistory([]); setSignature(''); 
+  };
+    const handleTransfer = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
-    if (activeModule === 'shield') {
-      if (!recipient || !amount) return alert('Fill fields!');
-      try {
-        setIsExecuting(true); setTxHash(null);
-        if (selectedToken === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
-          const tx = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: recipient, value: '0x' + val }] });
-          setTxHash(tx);
-        } else {
-          const provider = new window.ethers.BrowserProvider(activeProvider);
-          const signer = await provider.getSigner();
-          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const decimals = await contract.decimals();
-          const tx = await contract.transfer(recipient, window.ethers.parseUnits(amount, decimals));
-          setTxHash(tx.hash);
-        }
-        setIsExecuting(false); confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
-        setTimeout(async () => {
-          const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
-          setBalance((parseInt(b, 16) / 1e18).toFixed(4));
-        }, 5000);
-      } catch (e) { setIsExecuting(false); alert("Transaction failed!"); }
-    } else if (activeModule === 'escrow') {
-      if (!escrowAmount || parseFloat(escrowAmount) <= 0) return alert('Enter valid amount!');
-      if (!window.ethers) return alert('Engine loading, click again!');
-      try {
-        setIsExecuting(true); setTxHash(null);
-        const dur = parseInt(escrowDuration) * 3600;
+    if (!recipient || !amount) return alert('Fill all fields!');
+    try {
+      setIsExecuting(true);
+      let txHashRes = null;
+      if (selectedToken === 'USDC') {
+        const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
+        txHashRes = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: recipient, value: '0x' + val }] });
+      } else {
         const provider = new window.ethers.BrowserProvider(activeProvider);
         const signer = await provider.getSigner();
-        const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function lockFunds(uint256) external payable"], signer);
-        const tx = await contract.lockFunds(dur, { value: window.ethers.parseEther(escrowAmount) });
-        setTxHash(tx.hash); setIsExecuting(false); confetti({ particleCount: 250, spread: 120, origin: { y: 0.6 } });
-        setTimeout(() => { fetchLockStatus(); }, 4000);
-      } catch (e) { setIsExecuting(false); alert("Failed!"); }
-    }
-  };
-
-  const handleClaim = async (index) => {
-    if (!window.ethers) return;
-    try {
-      setIsExecuting(true); setTxHash(null);
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function claimFunds(uint256) external"], signer);
-      const tx = await contract.claimFunds(index);
-      setTxHash(tx.hash); setIsExecuting(false);
-      confetti({ particleCount: 300, spread: 150, origin: { y: 0.5 }, colors: ['#f59e0b', '#10b981'] });
+        const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
+        const decimals = await contract.decimals();
+        const tx = await contract.transfer(recipient, window.ethers.parseUnits(amount, decimals));
+        txHashRes = tx.hash;
+      }
+      
+      // Save to History
+      const newTx = { id: Date.now(), hash: txHashRes, amount, token: selectedToken, to: recipient, time: new Date().toLocaleTimeString() };
+      setTxHistory(prev => [newTx, ...prev]);
+      
+      setIsExecuting(false); 
+      setAmount(''); setRecipient('');
+      confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+      
       setTimeout(async () => {
-        fetchLockStatus();
         const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
         setBalance((parseInt(b, 16) / 1e18).toFixed(4));
       }, 5000);
-    } catch (e) { setIsExecuting(false); alert("Claim failed!"); }
+    } catch (e) { setIsExecuting(false); alert("Transaction failed or rejected!"); }
   };
-    const handleAiCommand = async (cmd) => {
-    if (!cmd) return;
-    setAiLogs(prev => [...prev, { role: 'user', msg: cmd }]);
-    setAiCommand('');
-    setIsAiProcessing(true);
-    const sendRegex = /(?:send|transfer|route)\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
-    const match = cmd.match(sendRegex);
-    if (match) {
-      const amountStr = match[1];
-      const tokenSymbol = match[2] ? match[2].toUpperCase() : 'USDC';
-      const toAddress = match[3];
-      setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent matched: Transfer ${amountStr} ${tokenSymbol} to ${toAddress.substring(0, 6)}... Requesting signature...` }]);
-      if (!walletAddress || !activeProvider) {
-         setIsAiProcessing(false);
-         setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Wallet not connected.` }]);
-         return;
-      }
-      try {
-        let txHashRes;
-        if (tokenSymbol === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(amountStr) * 1e18)).toString(16);
-          txHashRes = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: toAddress, value: '0x' + val }] });
-        } else {
-          const provider = new window.ethers.BrowserProvider(activeProvider);
-          const signer = await provider.getSigner();
-          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const decimals = await contract.decimals();
-          const tx = await contract.transfer(toAddress, window.ethers.parseUnits(amountStr, decimals));
-          txHashRes = tx.hash;
-        }
-        setAiLogs(prev => [...prev, { role: 'ai', msg: `✅ On-chain Execution Successful! TX: ${txHashRes}` }]);
-        confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
-        setTimeout(async () => {
-          const b = await activeProvider.request({ method: 'eth_getBalance', params: [walletAddress, 'latest'] });
-          setBalance((parseInt(b, 16) / 1e18).toFixed(4));
-        }, 5000);
-      } catch(e) {
-        setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Execution failed or rejected by user.` }]);
-      }
-    } else {
-       setTimeout(() => {
-         setAiLogs(prev => [...prev, { role: 'ai', msg: `⚡ Intent received: "${cmd}". (Note: For REAL transfer, type "Send [amount] [USDC/EURC] to [0xAddress]")` }]);
-       }, 1500);
-    }
-    setIsAiProcessing(false);
+
+  const handleSignMessage = async () => {
+    if (!walletAddress || !activeProvider || !signMessage) return;
+    try {
+      setIsExecuting(true); setSignature('');
+      const sig = await activeProvider.request({ method: 'personal_sign', params: [signMessage, walletAddress] });
+      setSignature(sig);
+      setIsExecuting(false);
+      confetti({ particleCount: 100, spread: 60, origin: { y: 0.7 }, colors: ['#fbbf24', '#f59e0b'] });
+    } catch(e) { setIsExecuting(false); alert("Signing rejected!"); }
   };
 
   const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30 relative">
+  // Theme Classes
+  const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-50 text-slate-800';
+  const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-200 shadow-xl';
+  const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-200 shadow-sm';
+  const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
+  const inputBg = isDark ? 'bg-slate-950 border-white/10 text-white' : 'bg-slate-50 border-slate-300 text-slate-900';
+    return (
+    <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
@@ -259,14 +171,19 @@ export default function App() {
         </div>
       )}
 
-      <header className="border-b border-white/5 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40">
+      <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-6 h-6 text-cyan-400" />
-            <span className="font-bold tracking-widest text-white">ARC<span className="text-cyan-400">OS</span></span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-6 h-6 text-cyan-500" />
+              <span className={`font-bold tracking-widest ${isDark ? 'text-white' : 'text-slate-900'}`}>ARC<span className="text-cyan-500">OS</span></span>
+            </div>
+            <button onClick={() => setIsDark(!isDark)} className={`p-2 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-amber-400' : 'bg-slate-100 border-slate-300 text-indigo-500'} hover:scale-110 transition-all`}>
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
           </div>
           {walletAddress ? (
-            <button onClick={disconnectWallet} className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 border border-cyan-500/30 text-cyan-400 flex items-center gap-2 hover:bg-rose-950/30 hover:border-rose-500/30 hover:text-rose-400 transition-all">
+            <button onClick={disconnectWallet} className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border flex items-center gap-2 transition-all ${isDark ? 'bg-slate-900 border-cyan-500/30 text-cyan-400 hover:bg-rose-950/30 hover:border-rose-500/30 hover:text-rose-400' : 'bg-white border-cyan-500 text-cyan-600 hover:bg-rose-50 hover:border-rose-500 hover:text-rose-600'}`}>
               {formatAddr(walletAddress)} <LogOut className="w-4 h-4" />
             </button>
           ) : (
@@ -278,289 +195,177 @@ export default function App() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden">
+        <section className={`border rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-start relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-400 font-mono">
-              <Cpu className="w-3 h-3" /> ArcOS - Agentic Economic Matrix
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-500 font-mono">
+              <Cpu className="w-3 h-3" /> ArcOS - Next Gen Matrix
             </div>
-            <h1 className="text-3xl md:text-5xl font-bold text-white leading-tight">Future-proof finance, tuned for autonomous motion.</h1>
-            <p className="text-slate-400 max-w-lg text-sm md:text-base">Command liquidity, identity, and execution from a single premium cockpit built for the next era of onchain operations.</p>
+            <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Future-proof finance, built for scale.</h1>
+            <p className={`max-w-lg text-sm md:text-base ${textMuted}`}>Command liquidity, verify identity, and track on-chain motion from a single unified cockpit.</p>
           </div>
           <div className="flex flex-col gap-4 min-w-[200px] relative z-10 w-full md:w-auto">
-            <div className="bg-slate-950 rounded-xl p-4 border border-white/5">
-              <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK STATUS</div>
-              <div className="flex items-center gap-2 text-emerald-400 font-mono text-sm"><Zap className="w-3 h-3" /> SECURE & LIVE</div>
+            <div className={`rounded-xl p-4 border transition-colors ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+              <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>NETWORK STATUS</div>
+              <div className="flex items-center gap-2 text-emerald-500 font-mono text-sm"><Zap className="w-3 h-3" /> SECURE & LIVE</div>
             </div>
-            <div className="bg-slate-950 rounded-xl p-4 border border-white/5 space-y-2">
-              <div className="text-[10px] text-slate-500 font-mono">OMNI-PORTFOLIO BALANCES</div>
-              <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                <span className="text-xs font-mono text-cyan-400">USDC</span>
-                <span className="text-lg font-bold text-white font-mono">{balance}</span>
+            <div className={`rounded-xl p-4 border transition-colors space-y-2 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+              <div className={`text-[10px] font-mono ${textMuted}`}>OMNI-PORTFOLIO BALANCES</div>
+              <div className={`flex justify-between items-center border-b pb-1 ${isDark ? 'border-white/5' : 'border-slate-200'}`}>
+                <span className="text-xs font-mono text-cyan-500 font-bold">USDC</span>
+                <span className={`text-lg font-bold font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{balance}</span>
               </div>
               <div className="flex justify-between items-center pt-1">
-                <span className="text-xs font-mono text-fuchsia-400">EURC</span>
-                <span className="text-lg font-bold text-white font-mono">{eurcBalance}</span>
+                <span className="text-xs font-mono text-fuchsia-500 font-bold">EURC</span>
+                <span className={`text-lg font-bold font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{eurcBalance}</span>
               </div>
             </div>
           </div>
         </section>
-
-        <section>
+                <section>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono">Choose a control surface</h2>
+            <h2 className={`text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}>Choose a control surface</h2>
             <Gauge className="w-4 h-4 text-cyan-500" />
           </div>
           <div className="space-y-3">
             {modules.map((mod) => {
               const Icon = mod.icon;
               const isActive = activeModule === mod.id;
+              const btnClass = isActive 
+                ? (isDark ? 'bg-slate-900 border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.1)]' : 'bg-white border-cyan-500 shadow-md')
+                : (isDark ? 'bg-slate-900/50 border-white/5 hover:bg-slate-900' : 'bg-slate-50 border-slate-200 hover:bg-white');
+              
               return (
-                <button key={mod.id} onClick={() => setActiveModule(mod.id)} className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left ${isActive ? 'bg-slate-900 border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.1)]' : 'bg-slate-900/50 border-white/5 hover:bg-slate-900'}`}>
+                <button key={mod.id} onClick={() => setActiveModule(mod.id)} className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left ${btnClass}`}>
                   <div className="flex items-center gap-4">
-                    <div className={`p-2 rounded-lg ${isActive ? 'bg-cyan-500/20 text-cyan-400' : 'bg-slate-800 text-slate-400'}`}><Icon className="w-5 h-5" /></div>
+                    <div className={`p-2 rounded-lg ${isActive ? 'bg-cyan-500/20 text-cyan-500' : (isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-500')}`}><Icon className="w-5 h-5" /></div>
                     <div>
-                      <div className={`font-bold ${isActive ? 'text-white' : 'text-slate-300'}`}>{mod.title}</div>
+                      <div className={`font-bold ${isActive ? (isDark ? 'text-white' : 'text-cyan-700') : (isDark ? 'text-slate-300' : 'text-slate-700')}`}>{mod.title}</div>
                       <div className="text-[10px] font-mono tracking-widest text-slate-500 mt-1">{mod.subtitle}</div>
                     </div>
                   </div>
-                  <ArrowRight className={`w-4 h-4 ${isActive ? 'text-cyan-400 translate-x-1' : 'text-slate-600'}`} />
+                  <ArrowRight className={`w-4 h-4 ${isActive ? 'text-cyan-500 translate-x-1' : 'text-slate-400'}`} />
                 </button>
               );
             })}
           </div>
         </section>
-                <section className="bg-slate-900 border border-white/5 rounded-2xl p-6 md:p-8 relative overflow-hidden">
+
+        <section className={`border rounded-2xl p-6 md:p-8 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-slate-400 font-mono"><Sparkles className="w-3 h-3 text-cyan-400" /> Active Module</div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-400 font-mono bg-cyan-400/10 px-2 py-1 rounded">{activeData.stat}</div>
+            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}><Sparkles className="w-3 h-3 text-cyan-500" /> Active Module</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-600 font-mono bg-cyan-500/10 px-2 py-1 rounded font-bold">{activeData.stat}</div>
           </div>
+          
           <div className="space-y-6">
-            <div className="inline-flex p-3 rounded-xl bg-slate-800/50 border border-white/5 text-cyan-400"><ActiveIcon className="w-6 h-6" /></div>
+            <div className={`inline-flex p-3 rounded-xl border text-cyan-500 ${isDark ? 'bg-slate-800/50 border-white/5' : 'bg-cyan-50 border-cyan-100'}`}><ActiveIcon className="w-6 h-6" /></div>
             <div>
-              <h3 className="text-2xl font-bold text-white mb-2">{activeData.title}</h3>
-              <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{activeData.description}</p>
+              <h3 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>{activeData.title}</h3>
+              <p className={`text-sm leading-relaxed max-w-2xl ${textMuted}`}>{activeData.description}</p>
             </div>
 
-            {activeModule === 'liquidity' && (
-              <div className="pt-6 mt-4 border-t border-fuchsia-500/20">
-                <div className="relative bg-slate-950 rounded-2xl border border-fuchsia-500/30 p-8 overflow-hidden text-center shadow-[0_0_30px_rgba(217,70,239,0.1)]">
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-fuchsia-600/20 rounded-full blur-[80px] animate-pulse pointer-events-none"></div>
-                  <h3 className="text-lg md:text-xl font-bold text-white mb-8 relative z-10 tracking-wider">OMNIMATRIX LIQUIDITY POOL</h3>
-                  <div className="flex flex-col md:flex-row justify-center items-center gap-6 relative z-10">
-                    <div className="bg-slate-900/80 backdrop-blur-sm border border-cyan-500/30 p-5 rounded-xl w-full md:w-48 shadow-[0_0_15px_rgba(34,211,238,0.2)] hover:scale-105 transition-transform">
-                      <div className="flex justify-center mb-3">
-                        <div className="w-10 h-10 bg-cyan-500/20 rounded-full flex items-center justify-center border border-cyan-500/50">
-                          <Globe2 className="w-5 h-5 text-cyan-400" />
-                        </div>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mb-1 tracking-widest">NATIVE USDC</div>
-                      <div className="text-2xl font-bold text-cyan-400 font-mono">{balance}</div>
-                    </div>
-                    <div className="hidden md:flex">
-                      <Orbit className="w-8 h-8 text-fuchsia-500 animate-spin-slow opacity-50" />
-                    </div>
-                    <div className="bg-slate-900/80 backdrop-blur-sm border border-fuchsia-500/30 p-5 rounded-xl w-full md:w-48 shadow-[0_0_15px_rgba(217,70,239,0.2)] hover:scale-105 transition-transform">
-                      <div className="flex justify-center mb-3">
-                        <div className="w-10 h-10 bg-fuchsia-500/20 rounded-full flex items-center justify-center border border-fuchsia-500/50">
-                          <Wallet2 className="w-5 h-5 text-fuchsia-400" />
-                        </div>
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono mb-1 tracking-widest">EURO COIN (EURC)</div>
-                      <div className="text-2xl font-bold text-fuchsia-400 font-mono">{eurcBalance}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeModule === 'delegate' && (
-              <div className="pt-6 mt-4 border-t border-cyan-500/20">
-                <div className="bg-slate-950/80 border border-cyan-500/30 rounded-2xl overflow-hidden flex flex-col h-[400px] shadow-[0_0_30px_rgba(34,211,238,0.1)] relative">
-                  <div className="bg-cyan-950/30 p-3 border-b border-cyan-500/20 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Bot className={`w-5 h-5 text-cyan-400 ${isAiProcessing ? 'animate-bounce' : ''}`} />
-                      <span className="text-xs font-mono text-cyan-400 font-bold tracking-widest">ARC-AGENT_v1.0</span>
-                    </div>
-                    <div className="flex gap-1 items-center">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span className="text-[10px] text-emerald-500 font-mono">ONLINE</span>
-                    </div>
-                  </div>
-                  <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs">
-                    {aiLogs.map((log, i) => (
-                      <div key={i} className={`flex ${log.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] p-3 rounded-lg ${log.role === 'user' ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-100' : 'bg-slate-900 border border-white/10 text-emerald-400'}`}>
-                          {log.role === 'system' && <span className="text-slate-500 mr-2">SYS&gt;</span>}
-                          {log.role === 'ai' && <span className="text-cyan-500 mr-2">AI&gt;</span>}
-                          {log.msg}
-                        </div>
-                      </div>
-                    ))}
-                    {isAiProcessing && (
-                      <div className="flex justify-start">
-                        <div className="bg-slate-900 border border-white/10 text-cyan-400 p-3 rounded-lg flex items-center gap-2">
-                          <Cpu className="w-4 h-4 animate-spin" /> Processing intent...
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-3 bg-slate-900/50 border-t border-white/10 flex gap-2">
-                    <input 
-                      type="text" 
-                      value={aiCommand} 
-                      onChange={(e) => setAiCommand(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAiCommand(aiCommand)}
-                      placeholder='Try: "Send 1 EURC to 0x..."' 
-                      className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-cyan-500/50 transition-all"
-                    />
-                    <button 
-                      onClick={() => handleAiCommand(aiCommand)}
-                      disabled={isAiProcessing || !aiCommand}
-                      className="px-4 bg-cyan-500 text-slate-950 font-bold rounded-lg hover:bg-cyan-400 disabled:opacity-50 transition-colors"
-                    >
-                      SEND
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeModule === 'escrow' && locks.length > 0 && (
-              <div className="space-y-4 mt-6">
-                {locks.map((lock, index) => {
-                  if (parseFloat(lock.amount) === 0 || lock.claimed) return null;
-                  const diff = lock.unlockTime - currentTime;
-                  const canClaim = diff <= 0;
-                  const h = Math.floor(Math.max(0, diff) / 3600);
-                  const m = Math.floor((Math.max(0, diff) % 3600) / 60);
-                  const s = Math.max(0, diff) % 60;
-                  const timeLeftStr = canClaim ? 'Ready to Claim!' : `${h}h ${m}m ${s}s remaining`;
-                  return (
-                    <div key={index} className="p-4 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-3 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-2 text-[10px] font-mono text-emerald-500/50">ID: #{index}</div>
-                      <div className="flex justify-between items-center text-emerald-400 font-mono text-sm border-b border-emerald-500/10 pb-2">
-                        <span className="flex items-center gap-2">🔒 LOCKED FUND</span>
-                        <span className="text-xl font-bold text-white">{lock.amount} USDC</span>
-                      </div>
-                      <div className="text-xs font-mono text-slate-300 flex justify-between items-center">
-                        <span>⏱️ STATUS: <b className={canClaim ? "text-emerald-400" : "text-amber-400"}>{timeLeftStr}</b></span>
-                        {canClaim && (
-                          <button onClick={() => handleClaim(index)} disabled={isExecuting} className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold rounded-lg hover:scale-105 transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                            🎉 CLAIM
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            
+            {/* 🔥 MODULE 1: SHIELD (SEND) 🔥 */}
             {activeModule === 'shield' && (
-              <div className="pt-4 space-y-4 border-t border-white/5 mt-4">
-                <div className="flex gap-4">
+              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-white/5' : 'border-slate-200'}`}>
+                <div className="flex flex-col md:flex-row gap-4 mb-4">
                   <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 font-mono mb-2">SELECT ASSET</label>
-                    <select value={selectedToken} onChange={e => setSelectedToken(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all">
+                    <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>SELECT ASSET</label>
+                    <select value={selectedToken} onChange={e => setSelectedToken(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`}>
                       <option value="USDC">USDC (Native)</option>
                       <option value="EURC">EURC (Euro Token)</option>
                     </select>
                   </div>
                   <div className="flex-1">
-                    <label className="block text-[10px] text-slate-500 font-mono mb-2">AMOUNT ({selectedToken})</label>
-                    <input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all" />
+                    <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>AMOUNT ({selectedToken})</label>
+                    <input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`} />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] text-slate-500 font-mono mb-2">RECIPIENT ADDRESS</label>
-                  <input type="text" placeholder="0x..." value={recipient} onChange={e => setRecipient(e.target.value)} className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500/50 transition-all" />
+                <div className="mb-6">
+                  <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>RECIPIENT ADDRESS</label>
+                  <input type="text" placeholder="0x..." value={recipient} onChange={e => setRecipient(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`} />
                 </div>
-              </div>
-            )}
-
-            {activeModule === 'escrow' && (
-              <div className="pt-4 space-y-4 border-t border-emerald-500/20 mt-4 bg-slate-950/50 p-4 rounded-xl">
-                <div className="flex flex-col md:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Lock className="w-3 h-3"/> AMOUNT TO LOCK (USDC)</label>
-                    <input type="number" placeholder="2.00" value={escrowAmount} onChange={e => setEscrowAmount(e.target.value)} className="w-full bg-slate-950 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all" />
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Timer className="w-3 h-3"/> LOCK DURATION</label>
-                    <select value={escrowDuration} onChange={e => setEscrowDuration(e.target.value)} className="w-full bg-slate-950 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all">
-                      <option value="1">1 Hour</option>
-                      <option value="6">6 Hours</option>
-                      <option value="24">24 Hours</option>
-                      <option value="72">3 Days</option>
-                    </select>
-                  </div>
-                </div>
-                <button 
-                  onClick={handleAction} 
-                  disabled={isExecuting}
-                  className="w-full px-8 py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold rounded-xl disabled:opacity-50 hover:bg-emerald-500 hover:text-slate-950 transition-all flex items-center justify-center gap-2 mt-4"
-                >
-                  <Lock className="w-4 h-4" /> 
-                  {isExecuting ? 'LOCKING FUND...' : `CREATE NEW LOCK`}
+                <button onClick={handleTransfer} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-cyan-500 text-white font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all flex items-center justify-center gap-2">
+                  <Zap className="w-4 h-4" /> {isExecuting ? 'PROCESSING...' : `SEND ${selectedToken}`}
                 </button>
               </div>
             )}
 
-            {txHash && activeModule === 'shield' && (
-              <div className="p-3 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400 text-xs font-mono break-all mt-4">
-                ✅ TX Hash: <a href={`https://testnet.arcscan.app/tx/${txHash}`} target="_blank" rel="noreferrer" className="underline hover:text-cyan-300 mt-1 inline-block">{txHash}</a>
-              </div>
-            )}
-            
-            {activeModule === 'shield' && (
-              <div className="pt-4 border-t border-white/5 mt-6">
-                <button onClick={handleAction} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-white text-slate-950 font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all flex items-center justify-center gap-2">
-                  <Zap className="w-4 h-4" /> {isExecuting ? 'EXECUTING ONCHAIN...' : `SEND ${selectedToken}`}
-                </button>
+            {/* 🔥 MODULE 2: TRANSACTION HISTORY (NEW) 🔥 */}
+            {activeModule === 'history' && (
+              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-emerald-500/20' : 'border-emerald-200'}`}>
+                {txHistory.length === 0 ? (
+                  <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions yet in this session.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {txHistory.map((tx) => (
+                      <div key={tx.id} className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${isDark ? 'bg-slate-950/50 border-emerald-500/20' : 'bg-emerald-50/50 border-emerald-200'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center"><CheckCircle className="w-4 h-4" /></div>
+                          <div>
+                            <div className={`font-bold font-mono text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>Sent {tx.amount} {tx.token}</div>
+                            <div className={`text-[10px] font-mono mt-1 ${textMuted}`}>To: {tx.to.substring(0,8)}...</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-xs font-mono font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>SUCCESS</div>
+                          <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noreferrer" className={`text-[10px] font-mono hover:underline ${textMuted}`}>View Tx ↗</a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
+            {/* 🔥 MODULE 3: WEB3 SIGNATURE (NEW) 🔥 */}
+            {activeModule === 'sign' && (
+              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-amber-500/20' : 'border-amber-200'}`}>
+                <div className="mb-4">
+                  <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>MESSAGE TO SIGN</label>
+                  <textarea rows="3" placeholder="I am proving ownership of this wallet..." value={signMessage} onChange={e => setSignMessage(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-amber-500 transition-all resize-none ${inputBg}`} />
+                </div>
+                <button onClick={handleSignMessage} disabled={isExecuting || !signMessage} className="w-full md:w-auto px-8 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-400 transition-all flex items-center justify-center gap-2 mb-6">
+                  <PenTool className="w-4 h-4" /> {isExecuting ? 'WAITING FOR WALLET...' : 'SIGN MESSAGE'}
+                </button>
+                {signature && (
+                  <div className={`p-4 rounded-xl border break-all font-mono text-xs ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                    <div className="text-[10px] font-bold mb-2 text-amber-500 uppercase tracking-widest">Generated Signature:</div>
+                    {signature}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 🔥 MODULE 4: PASSPORT 🔥 */}
             {activeModule === 'passport' && (
-              <div className="pt-8 mt-6 border-t border-fuchsia-500/20">
+              <div className={`pt-8 mt-6 border-t ${isDark ? 'border-fuchsia-500/20' : 'border-fuchsia-200'}`}>
                 <div className="relative group w-full max-w-sm mx-auto">
-                  <div className="absolute inset-0 bg-gradient-to-r from-fuchsia-600 to-cyan-600 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition duration-700 animate-pulse"></div>
-                  <div className="relative bg-slate-950/90 backdrop-blur-xl border border-fuchsia-500/50 rounded-2xl p-6 shadow-[0_0_40px_rgba(217,70,239,0.15)] overflow-hidden">
-                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px] pointer-events-none opacity-20"></div>
+                  <div className={`absolute inset-0 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition duration-700 animate-pulse ${isDark ? 'bg-gradient-to-r from-fuchsia-600 to-cyan-600' : 'bg-gradient-to-r from-fuchsia-300 to-cyan-300'}`}></div>
+                  <div className={`relative backdrop-blur-xl border rounded-2xl p-6 overflow-hidden ${isDark ? 'bg-slate-950/90 border-fuchsia-500/50 shadow-[0_0_40px_rgba(217,70,239,0.15)]' : 'bg-white/90 border-fuchsia-300 shadow-xl'}`}>
                     <div className="flex justify-between items-center mb-6">
-                      <div className="text-fuchsia-400 font-mono text-xs tracking-[0.3em] font-bold">ARC CITIZEN</div>
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-500 flex items-center justify-center border border-white/20 shadow-[0_0_15px_rgba(217,70,239,0.5)]">
+                      <div className={`font-mono text-xs tracking-[0.3em] font-bold ${isDark ? 'text-fuchsia-400' : 'text-fuchsia-600'}`}>ARC CITIZEN</div>
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-500 flex items-center justify-center border border-white/20">
                         <Orbit className="w-5 h-5 text-white animate-spin-slow" />
                       </div>
                     </div>
                     <div className="space-y-5 relative z-10">
                       <div>
-                        <div className="text-[10px] text-slate-500 font-mono mb-1">UNIVERSAL ID (ADDRESS)</div>
-                        <div className="text-sm md:text-base text-white font-mono bg-fuchsia-500/10 p-3 rounded-lg border border-fuchsia-500/30 break-all text-center tracking-wider">
+                        <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>UNIVERSAL ID (ADDRESS)</div>
+                        <div className={`text-sm font-mono p-3 rounded-lg border break-all text-center tracking-wider ${isDark ? 'bg-fuchsia-500/10 border-fuchsia-500/30 text-white' : 'bg-fuchsia-50 border-fuchsia-200 text-fuchsia-900'}`}>
                           {walletAddress ? walletAddress : "SYSTEM OFFLINE"}
                         </div>
                       </div>
                       <div className="flex gap-4">
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
-                          <div className="text-[10px] text-slate-500 font-mono mb-1">NETWORK MESH</div>
-                          <div className="text-xs text-cyan-400 font-bold font-mono">ARC TESTNET</div>
+                        <div className={`flex-1 p-2 rounded-lg border ${isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>NETWORK MESH</div>
+                          <div className="text-xs text-cyan-500 font-bold font-mono">ARC TESTNET</div>
                         </div>
-                        <div className="flex-1 bg-slate-900/50 p-2 rounded-lg border border-white/5">
-                          <div className="text-[10px] text-slate-500 font-mono mb-1">LIVE STATUS</div>
-                          <div className="text-xs text-emerald-400 font-bold font-mono flex items-center gap-1">
+                        <div className={`flex-1 p-2 rounded-lg border ${isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>LIVE STATUS</div>
+                          <div className="text-xs text-emerald-500 font-bold font-mono flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
                           </div>
-                        </div>
-                      </div>
-                      <div className="pt-4 border-t border-fuchsia-500/20 flex justify-between items-end">
-                        <div className="flex gap-1">
-                          {[...Array(14)].map((_, i) => (
-                            <div key={i} className="w-1 bg-fuchsia-500/60 rounded-full" style={{ height: `${Math.random() * 20 + 10}px` }}></div>
-                          ))}
-                        </div>
-                        <div className="text-[10px] text-fuchsia-500 font-mono tracking-[0.2em] bg-fuchsia-500/10 px-2 py-1 rounded">
-                          SEQ-{walletAddress ? walletAddress.substring(2, 6).toUpperCase() : "0000"}
                         </div>
                       </div>
                     </div>
@@ -568,7 +373,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
           </div>
         </section>
       </main>
