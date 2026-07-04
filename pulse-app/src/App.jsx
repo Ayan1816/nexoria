@@ -42,10 +42,9 @@ export default function App() {
   const [txHash, setTxHash] = useState(null);
 
   const [aiCommand, setAiCommand] = useState('');
-  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready. (Type: "Send 1 EURC to 0x..." or "Send 1 USDC to 0x...")' }]);
+  const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready. (Type: "Send 1 EURC to 0x...")' }]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
 
-  // New Unique Features States
   const [txHistory, setTxHistory] = useState([]);
   const [signMessage, setSignMessage] = useState('');
   const [signature, setSignature] = useState('');
@@ -127,7 +126,8 @@ export default function App() {
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); }
   };
-    const handleProviderSelect = (type) => {
+
+  const handleProviderSelect = (type) => {
     if (!window.ethereum) return alert("No wallet!");
     const provs = window.ethereum.providers || [window.ethereum];
     let chosen = window.ethereum;
@@ -140,8 +140,7 @@ export default function App() {
     setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); 
     setActiveProvider(null); setTxHash(null); setLocks([]); setTxHistory([]); setSignature(''); 
   };
-
-  const handleAction = async () => {
+    const handleAction = async () => {
     if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
     if (activeModule === 'shield') {
       if (!recipient || !amount) return alert('Fill fields!');
@@ -162,7 +161,6 @@ export default function App() {
           setTxHash(txHashRes);
         }
         
-        // Save to History
         setTxHistory(prev => [{ id: Date.now(), hash: txHashRes, amount, token: selectedToken, to: recipient, time: new Date().toLocaleTimeString() }, ...prev]);
         
         setIsExecuting(false); confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
@@ -267,13 +265,13 @@ export default function App() {
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
-  // Theme styling classes
   const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
   const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
   const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
   const inputBg = isDark ? 'bg-slate-950 border-white/10 text-white' : 'bg-slate-50 border-slate-300 text-slate-900';
-    return (
+
+  return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 relative ${bgMain}`}>
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -374,8 +372,7 @@ export default function App() {
             })}
           </div>
         </section>
-
-        <section className={`border rounded-2xl p-6 md:p-8 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
+                <section className={`border rounded-2xl p-6 md:p-8 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           <div className="flex items-center justify-between mb-8">
             <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}><Sparkles className="w-3 h-3 text-cyan-500" /> Active Module</div>
@@ -518,4 +515,113 @@ export default function App() {
                     <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>SELECT ASSET</label>
                     <select value={selectedToken} onChange={e => setSelectedToken(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`}>
                       <option value="USDC">USDC (Native)</option>
-        
+                      <option value="EURC">EURC (Euro Token)</option>
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>AMOUNT ({selectedToken})</label>
+                    <input type="number" placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`} />
+                  </div>
+                </div>
+                <div className="mb-6">
+                  <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>RECIPIENT ADDRESS</label>
+                  <input type="text" placeholder="0x..." value={recipient} onChange={e => setRecipient(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-cyan-500 transition-all ${inputBg}`} />
+                </div>
+                {txHash && (
+                  <div className={`p-3 rounded-xl text-xs font-mono break-all mb-4 ${isDark ? 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400' : 'bg-cyan-50 border border-cyan-200 text-cyan-800'}`}>
+                    ✅ TX Hash: <a href={`https://testnet.arcscan.app/tx/${txHash}`} target="_blank" rel="noreferrer" className="underline hover:text-cyan-500 mt-1 inline-block">{txHash}</a>
+                  </div>
+                )}
+                <button onClick={handleAction} disabled={isExecuting} className="w-full md:w-auto px-8 py-3 bg-cyan-500 text-white font-bold rounded-xl hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all flex items-center justify-center gap-2">
+                  <Zap className="w-4 h-4" /> {isExecuting ? 'PROCESSING...' : `SEND ${selectedToken}`}
+                </button>
+              </div>
+            )}
+                        {/* 🔥 MODULE 5: TRANSACTION LEDGER (NEW) 🔥 */}
+            {activeModule === 'history' && (
+              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-teal-500/20' : 'border-teal-200'}`}>
+                {txHistory.length === 0 ? (
+                  <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet in this session. Send some assets!</div>
+                ) : (
+                  <div className="space-y-3">
+                    {txHistory.map((tx) => (
+                      <div key={tx.id} className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${isDark ? 'bg-slate-950/50 border-teal-500/20' : 'bg-teal-50/50 border-teal-200'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-teal-500/20 text-teal-500 flex items-center justify-center"><CheckCircle className="w-4 h-4" /></div>
+                          <div>
+                            <div className={`font-bold font-mono text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>Sent {tx.amount} {tx.token}</div>
+                            <div className={`text-[10px] font-mono mt-1 ${textMuted}`}>To: {tx.to.substring(0,8)}... | Time: {tx.time}</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-xs font-mono font-bold ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>SUCCESS</div>
+                          <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noreferrer" className={`text-[10px] font-mono hover:underline ${textMuted}`}>View Tx ↗</a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 🔥 MODULE 6: WEB3 AUTHENTICATOR (NEW) 🔥 */}
+            {activeModule === 'sign' && (
+              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-amber-500/20' : 'border-amber-200'}`}>
+                <div className="mb-4">
+                  <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>CUSTOM CRYPTOGRAPHIC MESSAGE</label>
+                  <textarea rows="3" placeholder="I am verifying ownership of this wallet for ArcOS authentication..." value={signMessage} onChange={e => setSignMessage(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-amber-500 transition-all resize-none ${inputBg}`} />
+                </div>
+                <button onClick={handleSignMessage} disabled={isExecuting || !signMessage} className="w-full md:w-auto px-8 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-400 transition-all flex items-center justify-center gap-2 mb-6">
+                  <PenTool className="w-4 h-4" /> {isExecuting ? 'AWAITING WALLET SIGNATURE...' : 'SIGN MESSAGE NOW'}
+                </button>
+                {signature && (
+                  <div className={`p-4 rounded-xl border break-all font-mono text-xs ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                    <div className="text-[10px] font-bold mb-2 text-amber-500 uppercase tracking-widest">Digital Signature Proof Generated:</div>
+                    {signature}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 🔥 MODULE 7: PASSPORT 🔥 */}
+            {activeModule === 'passport' && (
+              <div className={`pt-8 mt-6 border-t ${isDark ? 'border-fuchsia-500/20' : 'border-fuchsia-200'}`}>
+                <div className="relative group w-full max-w-sm mx-auto">
+                  <div className={`absolute inset-0 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition duration-700 animate-pulse ${isDark ? 'bg-gradient-to-r from-fuchsia-600 to-cyan-600' : 'bg-gradient-to-r from-fuchsia-300 to-cyan-300'}`}></div>
+                  <div className={`relative backdrop-blur-xl border rounded-2xl p-6 overflow-hidden ${isDark ? 'bg-slate-950/90 border-fuchsia-500/50 shadow-[0_0_40px_rgba(217,70,239,0.15)]' : 'bg-white/90 border-fuchsia-300 shadow-xl'}`}>
+                    <div className="flex justify-between items-center mb-6">
+                      <div className={`font-mono text-xs tracking-[0.3em] font-bold ${isDark ? 'text-fuchsia-400' : 'text-fuchsia-600'}`}>ARC CITIZEN</div>
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-cyan-500 flex items-center justify-center border border-white/20">
+                        <Orbit className="w-5 h-5 text-white animate-spin-slow" />
+                      </div>
+                    </div>
+                    <div className="space-y-5 relative z-10">
+                      <div>
+                        <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>UNIVERSAL ID (ADDRESS)</div>
+                        <div className={`text-sm font-mono p-3 rounded-lg border break-all text-center tracking-wider ${isDark ? 'bg-fuchsia-500/10 border-fuchsia-500/30 text-white' : 'bg-fuchsia-50 border-fuchsia-200 text-fuchsia-900'}`}>
+                          {walletAddress ? walletAddress : "SYSTEM OFFLINE"}
+                        </div>
+                      </div>
+                      <div className="flex gap-4">
+                        <div className={`flex-1 p-2 rounded-lg border ${isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>NETWORK MESH</div>
+                          <div className="text-xs text-cyan-500 font-bold font-mono">ARC TESTNET</div>
+                        </div>
+                        <div className={`flex-1 p-2 rounded-lg border ${isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`text-[10px] font-mono mb-1 ${textMuted}`}>LIVE STATUS</div>
+                          <div className="text-xs text-emerald-500 font-bold font-mono flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> {walletAddress ? "VERIFIED" : "AWAITING"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
