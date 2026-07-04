@@ -1,20 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import {
-  ArrowRight, Bot, Clock3, Cpu, Gauge,
-  Orbit, ShieldCheck, Sparkles, Zap, LogOut, Lock, Timer,
-  Sun, Moon, History, PenTool, CheckCircle
+  Bot, History, PenTool, Orbit, 
+  Sun, Moon, LogOut, Cpu, Zap, ShieldCheck
 } from 'lucide-react';
 
 const modules = [
   { id: 'delegate', title: 'AI Agentic Delegate', subtitle: 'AUTONOMOUS POLICY ROUTING', description: 'Deploy an intent-driven delegate that negotiates treasury moves, routes liquidity, and watches risk in real time.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: '92% SIGNAL CLARITY' },
-  { id: 'escrow', title: 'Time-Stream Escrow', subtitle: 'PROGRAMMABLE MILESTONE TRUST', description: 'Lock funds securely in a time-locked smart contract. Watch live countdown and claim funds once time expires.', accent: 'from-emerald-400 to-cyan-400', icon: Clock3, stat: '24/7 ESCROW PULSE' },
   { id: 'history', title: 'Transaction Ledger', subtitle: 'ON-CHAIN RECEIPTS', description: 'Real-time history of all your executed transactions and transfers in this session.', accent: 'from-teal-400 to-emerald-500', icon: History, stat: 'LIVE SYNC' },
   { id: 'sign', title: 'Web3 Authenticator', subtitle: 'CRYPTOGRAPHIC PROOF', description: 'Sign custom messages using your wallet private key to prove identity and ownership.', accent: 'from-amber-400 to-orange-500', icon: PenTool, stat: 'NO GAS' },
   { id: 'passport', title: 'Holographic Web3 Passport', subtitle: 'PORTABLE IDENTITY MESH', description: 'A unified identity layer that travels with the user across the entire Arc network ecosystem.', accent: 'from-violet-500 to-fuchsia-500', icon: Orbit, stat: 'boss.arc' }
 ];
 
-const ESCROW_CONTRACT_ADDRESS = "0x384182B8041e6b959Adab44745efd728da7ADB0C";
 const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a"; 
 const arcChainIdHex = '0x4cef52';
 
@@ -28,14 +25,6 @@ export default function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [activeProvider, setActiveProvider] = useState(null);
   
-  const [escrowAmount, setEscrowAmount] = useState('');
-  const [escrowDuration, setEscrowDuration] = useState('1');
-
-  const [locks, setLocks] = useState([]);
-  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [txHash, setTxHash] = useState(null);
-
   const [aiCommand, setAiCommand] = useState('');
   const [aiLogs, setAiLogs] = useState([{ role: 'system', msg: 'System online. ArcOS AI Core ready. (Type: "Send 1 EURC to 0x..." or "Send 1 USDC to 0x...")' }]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
@@ -43,6 +32,7 @@ export default function App() {
   const [txHistory, setTxHistory] = useState([]);
   const [signMessage, setSignMessage] = useState('');
   const [signature, setSignature] = useState('');
+  const [isExecuting, setIsExecuting] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && !window.ethers) {
@@ -52,8 +42,7 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, []);
-    // 🔥 BUG FIX: Unified Balance Updater for BOTH USDC and EURC
-  const updateBalances = async (provider, address) => {
+    const updateBalances = async (provider, address) => {
     try {
       const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
       setBalance((parseInt(balHex, 16) / 1e18).toFixed(4)); 
@@ -67,34 +56,6 @@ export default function App() {
       }
     } catch (e) { console.log("Balance fetch error", e); }
   };
-
-  const fetchLockStatus = async () => {
-    if (!walletAddress || !activeProvider || !window.ethers) return;
-    try {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const contract = new window.ethers.Contract(
-        ESCROW_CONTRACT_ADDRESS,
-        ["function getUserLocks(address) view returns (tuple(uint256 amount, uint256 unlockTime, bool claimed)[])"],
-        provider
-      );
-      const data = await contract.getUserLocks(walletAddress);
-      const formatted = data.map(d => ({
-        amount: window.ethers.formatEther(d.amount),
-        unlockTime: Number(d.unlockTime),
-        claimed: d.claimed
-      }));
-      setLocks(formatted);
-    } catch (e) { console.log("Lock fetch error:", e); }
-  };
-
-  useEffect(() => {
-    if (activeModule === 'escrow' && walletAddress) fetchLockStatus();
-  }, [activeModule, walletAddress, txHash]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const executeConnection = async (targetProvider) => {
     try {
@@ -135,56 +96,10 @@ export default function App() {
 
   const disconnectWallet = () => { 
     setWalletAddress(null); setBalance('0.00'); setEurcBalance('0.00'); 
-    setActiveProvider(null); setTxHash(null); setLocks([]); setTxHistory([]); setSignature(''); 
+    setActiveProvider(null); setTxHistory([]); setSignature(''); 
   };
 
-  const handleAction = async () => {
-    if (!walletAddress || !activeProvider) return alert('Connect wallet first!');
-    if (activeModule === 'escrow') {
-      if (!escrowAmount || parseFloat(escrowAmount) <= 0) return alert('Enter valid amount!');
-      if (!window.ethers) return alert('Engine loading, click again!');
-      try {
-        setIsExecuting(true); setTxHash(null);
-        const dur = parseInt(escrowDuration) * 3600;
-        const provider = new window.ethers.BrowserProvider(activeProvider);
-        const signer = await provider.getSigner();
-        const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function lockFunds(uint256) external payable"], signer);
-        const tx = await contract.lockFunds(dur, { value: window.ethers.parseEther(escrowAmount) });
-        
-        // 🔥 BUG FIX: Save Escrow lock to Transaction History
-        setTxHistory(prev => [{ id: Date.now(), hash: tx.hash, amount: escrowAmount, token: 'USDC (Locked)', to: 'Escrow Vault', time: new Date().toLocaleTimeString() }, ...prev]);
-        
-        setTxHash(tx.hash); setIsExecuting(false); confetti({ particleCount: 250, spread: 120, origin: { y: 0.6 } });
-        
-        setTimeout(async () => { 
-          fetchLockStatus(); 
-          await updateBalances(activeProvider, walletAddress); // 🔥 BUG FIX: Update main balance after lock
-        }, 4000);
-      } catch (e) { setIsExecuting(false); alert("Failed!"); }
-    }
-  };
-
-  const handleClaim = async (index) => {
-    if (!window.ethers) return;
-    try {
-      setIsExecuting(true); setTxHash(null);
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(ESCROW_CONTRACT_ADDRESS, ["function claimFunds(uint256) external"], signer);
-      const tx = await contract.claimFunds(index);
-      
-      setTxHistory(prev => [{ id: Date.now(), hash: tx.hash, amount: 'Claimed', token: 'USDC', to: 'Wallet', time: new Date().toLocaleTimeString() }, ...prev]);
-      
-      setTxHash(tx.hash); setIsExecuting(false);
-      confetti({ particleCount: 300, spread: 150, origin: { y: 0.5 }, colors: ['#f59e0b', '#10b981'] });
-      
-      setTimeout(async () => {
-        fetchLockStatus();
-        await updateBalances(activeProvider, walletAddress);
-      }, 5000);
-    } catch (e) { setIsExecuting(false); alert("Claim failed!"); }
-  };
-    const handleSignMessage = async () => {
+  const handleSignMessage = async () => {
     if (!walletAddress || !activeProvider || !signMessage) return;
     try {
       setIsExecuting(true); setSignature('');
@@ -230,7 +145,7 @@ export default function App() {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
         
         setTimeout(async () => {
-          await updateBalances(activeProvider, walletAddress); // 🔥 BUG FIX: Update BOTH balances after AI transfer
+          await updateBalances(activeProvider, walletAddress); 
         }, 5000);
       } catch(e) {
         setAiLogs(prev => [...prev, { role: 'system', msg: `ERROR: Execution failed or rejected by user.` }]);
@@ -242,18 +157,17 @@ export default function App() {
     }
     setIsAiProcessing(false);
   };
-
-  const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
+    const formatAddr = (a) => a ? `${a.substring(0, 6)}...${a.substring(a.length - 4)}` : '';
   const activeData = modules.find(m => m.id === activeModule);
   const ActiveIcon = activeData.icon;
 
-  // Theme styling classes
   const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
   const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
   const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
   const inputBg = isDark ? 'bg-slate-950 border-white/10 text-white' : 'bg-slate-50 border-slate-300 text-slate-900';
-    return (
+
+  return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 relative ${bgMain}`}>
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -304,8 +218,8 @@ export default function App() {
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-500 font-mono">
               <Cpu className="w-3 h-3" /> ArcOS - Agentic Economic Matrix
             </div>
-            <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Future-proof finance, tuned for autonomous motion.</h1>
-            <p className={`max-w-lg text-sm md:text-base ${textMuted}`}>Command liquidity, identity, and execution from a single premium cockpit built for the next era of onchain operations.</p>
+            <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Future-proof finance, built for scale.</h1>
+            <p className={`max-w-lg text-sm md:text-base ${textMuted}`}>Command liquidity, verify identity, and track on-chain motion from a single unified cockpit.</p>
           </div>
           <div className="flex flex-col gap-4 min-w-[200px] relative z-10 w-full md:w-auto">
             <div className={`rounded-xl p-4 border transition-colors ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
@@ -329,7 +243,6 @@ export default function App() {
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className={`text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}>Choose a control surface</h2>
-            <Gauge className="w-4 h-4 text-cyan-500" />
           </div>
           <div className="space-y-3">
             {modules.map((mod) => {
@@ -357,7 +270,7 @@ export default function App() {
                 <section className={`border rounded-2xl p-6 md:p-8 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
           <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${activeData.accent}`} />
           <div className="flex items-center justify-between mb-8">
-            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}><Sparkles className="w-3 h-3 text-cyan-500" /> Active Module</div>
+            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono ${textMuted}`}><ActiveIcon className="w-3 h-3 text-cyan-500" /> Active Module</div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-600 font-mono bg-cyan-500/10 px-2 py-1 rounded font-bold">{activeData.stat}</div>
           </div>
           
@@ -408,61 +321,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 🔥 MODULE 2: ESCROW 🔥 */}
-            {activeModule === 'escrow' && (
-              <div className={`pt-6 mt-4 border-t ${isDark ? 'border-emerald-500/20' : 'border-emerald-200'}`}>
-                {locks.length > 0 && (
-                  <div className="space-y-4 mb-6">
-                    {locks.map((lock, index) => {
-                      if (parseFloat(lock.amount) === 0 || lock.claimed) return null;
-                      const diff = lock.unlockTime - currentTime;
-                      const canClaim = diff <= 0;
-                      const h = Math.floor(Math.max(0, diff) / 3600);
-                      const m = Math.floor((Math.max(0, diff) % 3600) / 60);
-                      const s = Math.max(0, diff) % 60;
-                      const timeLeftStr = canClaim ? 'Ready to Claim!' : `${h}h ${m}m ${s}s remaining`;
-                      return (
-                        <div key={index} className={`p-4 rounded-xl border space-y-3 relative overflow-hidden ${isDark ? 'bg-emerald-950/20 border-emerald-500/30' : 'bg-emerald-50 border-emerald-300'}`}>
-                          <div className="absolute top-0 right-0 p-2 text-[10px] font-mono text-emerald-500/50">ID: #{index}</div>
-                          <div className={`flex justify-between items-center font-mono text-sm border-b pb-2 ${isDark ? 'text-emerald-400 border-emerald-500/10' : 'text-emerald-700 border-emerald-200'}`}>
-                            <span className="flex items-center gap-2">🔒 LOCKED FUND</span>
-                            <span className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{lock.amount} USDC</span>
-                          </div>
-                          <div className={`text-xs font-mono flex justify-between items-center ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                            <span>⏱️ STATUS: <b className={canClaim ? "text-emerald-500" : "text-amber-500"}>{timeLeftStr}</b></span>
-                            {canClaim && (
-                              <button onClick={() => handleClaim(index)} disabled={isExecuting} className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-bold rounded-lg hover:scale-105 transition-all shadow-md">🎉 CLAIM</button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className={`space-y-4 p-4 rounded-xl border ${isDark ? 'bg-slate-950/50 border-emerald-500/20' : 'bg-slate-50 border-slate-300'}`}>
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <div className="flex-1">
-                      <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Lock className="w-3 h-3"/> AMOUNT TO LOCK (USDC)</label>
-                      <input type="number" placeholder="2.00" value={escrowAmount} onChange={e => setEscrowAmount(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all ${inputBg}`} />
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-[10px] text-emerald-500 font-mono mb-2 flex items-center gap-1"><Timer className="w-3 h-3"/> LOCK DURATION</label>
-                      <select value={escrowDuration} onChange={e => setEscrowDuration(e.target.value)} className={`w-full rounded-xl p-3 font-mono text-sm focus:outline-none focus:border-emerald-400 transition-all ${inputBg}`}>
-                        <option value="1">1 Hour</option>
-                        <option value="6">6 Hours</option>
-                        <option value="24">24 Hours</option>
-                        <option value="72">3 Days</option>
-                      </select>
-                    </div>
-                  </div>
-                  <button onClick={handleAction} disabled={isExecuting} className="w-full px-8 py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 font-bold rounded-xl disabled:opacity-50 hover:bg-emerald-500 hover:text-white transition-all flex items-center justify-center gap-2 mt-4">
-                    <Lock className="w-4 h-4" /> {isExecuting ? 'LOCKING FUND...' : `CREATE NEW LOCK`}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* 🔥 MODULE 3: TRANSACTION LEDGER 🔥 */}
+            {/* 🔥 MODULE 2: TRANSACTION LEDGER 🔥 */}
             {activeModule === 'history' && (
               <div className={`pt-6 mt-4 border-t ${isDark ? 'border-teal-500/20' : 'border-teal-200'}`}>
                 {txHistory.length === 0 ? (
@@ -489,7 +348,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 🔥 MODULE 4: WEB3 AUTHENTICATOR 🔥 */}
+            {/* 🔥 MODULE 3: WEB3 AUTHENTICATOR 🔥 */}
             {activeModule === 'sign' && (
               <div className={`pt-6 mt-4 border-t ${isDark ? 'border-amber-500/20' : 'border-amber-200'}`}>
                 <div className="mb-4">
@@ -508,7 +367,7 @@ export default function App() {
               </div>
             )}
 
-            {/* 🔥 MODULE 5: PASSPORT 🔥 */}
+            {/* 🔥 MODULE 4: PASSPORT 🔥 */}
             {activeModule === 'passport' && (
               <div className={`pt-8 mt-6 border-t ${isDark ? 'border-fuchsia-500/20' : 'border-fuchsia-200'}`}>
                 <div className="relative group w-full max-w-sm mx-auto">
@@ -549,4 +408,4 @@ export default function App() {
       </main>
     </div>
   );
-                        }
+}
