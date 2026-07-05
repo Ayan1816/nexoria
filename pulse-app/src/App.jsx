@@ -17,10 +17,14 @@ const arcChainIdHex = '0x4cef52';
 export default function App() {
   const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(modules[0].id);
+  
+  // Wallet & Connection States
   const [walletAddress, setWalletAddress] = useState(null);
   const [activeProvider, setActiveProvider] = useState(null);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   
-  // Balances & Distribution
+  // Balances
   const [balance, setBalance] = useState('0.00');
   const [eurcBalance, setEurcBalance] = useState('0.00');
   
@@ -28,21 +32,16 @@ export default function App() {
   const [terminalLogs, setTerminalLogs] = useState([]);
   const terminalEndRef = useRef(null);
 
-  // AI State
+  // Feature States
   const [aiCommand, setAiCommand] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
-
-  // Telemetry State
   const [blockNumber, setBlockNumber] = useState('SYNCING...');
   const [gasPrice, setGasPrice] = useState('SYNCING...');
-
-  // Security Matrix State
   const [spenderAddress, setSpenderAddress] = useState('');
   const [tokenToCheck, setTokenToCheck] = useState('EURC');
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
 
-  // Auto-scroll terminal
   useEffect(() => {
     if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [terminalLogs]);
@@ -54,13 +53,11 @@ export default function App() {
       document.body.appendChild(script);
     }
   }, []);
-    // 🔥 Helper: Add real-time log to Terminal
-  const addLog = (msg, type = 'info') => {
+    const addLog = (msg, type = 'info') => {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs(prev => [...prev, { time, msg, type }]);
   };
 
-  // 🔥 Fetch Network Data (Telemetry)
   const fetchNetworkData = async (provider) => {
     try {
       const blockHex = await provider.request({ method: 'eth_blockNumber' });
@@ -70,7 +67,6 @@ export default function App() {
     } catch (e) { console.log(e); }
   };
 
-  // 🔥 Update Balances
   const updateBalances = async (provider, address) => {
     try {
       addLog(`Fetching omni-balances for ${address.substring(0,6)}...`, 'process');
@@ -88,7 +84,6 @@ export default function App() {
     } catch (e) { addLog(`Balance fetch error: ${e.message}`, 'error'); }
   };
 
-  // Live Block Polling
   useEffect(() => {
     let interval;
     if (activeProvider && activeModule === 'telemetry') {
@@ -97,12 +92,14 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [activeProvider, activeModule]);
-    const connectWallet = async () => {
-    if (!window.ethereum) return alert("Install Web3 Wallet!");
+    const executeConnection = async (targetProvider) => {
     try {
-      addLog('Initiating wallet connection...', 'process');
-      const targetProvider = window.ethereum.providers ? window.ethereum.providers.find(p => p.isRabby) || window.ethereum : window.ethereum;
+      setIsConnecting(true); 
+      setShowWalletModal(false); 
       
+      try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } 
+      catch (e) { setIsConnecting(false); return; }
+
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
       const currentChain = await targetProvider.request({ method: 'eth_chainId' });
@@ -111,25 +108,39 @@ export default function App() {
         addLog('Switching to Arc Testnet...', 'process');
         try { await targetProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: arcChainIdHex }] }); }
         catch (e) {
-          if (e.code === 4902) {
-            await targetProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: arcChainIdHex, chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 } }] });
-          }
+          if (e.code === 4902 || e.code === -32603) {
+            await targetProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: arcChainIdHex, chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
+          } else throw new Error("Cancelled");
         }
       }
+      
+      await new Promise(r => setTimeout(r, 1500));
       setActiveProvider(targetProvider);
       setWalletAddress(address);
       await updateBalances(targetProvider, address);
       addLog(`Wallet Connected: ${address}`, 'success');
-      confetti({ particleCount: 100, spread: 70, origin: { y: 0.4 } });
-    } catch (e) { addLog(`Connection failed: ${e.message}`, 'error'); }
+      setIsConnecting(false);
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
+    } catch (error) { 
+      setIsConnecting(false); 
+      addLog(`Connection failed: ${error.message}`, 'error'); 
+    }
+  };
+
+  const handleProviderSelect = (type) => {
+    if (!window.ethereum) return alert("No wallet installed!");
+    const provs = window.ethereum.providers || [window.ethereum];
+    let chosen = window.ethereum;
+    if (type === 'rabby') chosen = provs.find(p => p.isRabby) || window.ethereum;
+    else if (type === 'metamask') chosen = provs.find(p => p.isMetaMask && !p.isRabby) || window.ethereum;
+    executeConnection(chosen);
   };
 
   const disconnectWallet = () => {
     setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00'); setTerminalLogs([]);
+    addLog(`Wallet disconnected successfully.`, 'info');
   };
-
-  // 🔥 Real Security: Check Allowance
-  const checkAllowance = async () => {
+    const checkAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
     addLog(`Scanning allowance for spender: ${spenderAddress.substring(0,8)}...`, 'process');
@@ -145,7 +156,6 @@ export default function App() {
     setIsChecking(false);
   };
 
-  // 🔥 Real Security: Revoke Allowance
   const revokeAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
@@ -163,15 +173,13 @@ export default function App() {
     } catch (e) { addLog(`Revoke rejected or failed.`, 'error'); }
     setIsChecking(false);
   };
-    // 🔥 AI Multi-Batch Execution
+
   const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider) return;
     addLog(`[AI INPUT] ${aiCommand}`, 'info');
     setIsAiProcessing(true);
     
-    // Check for multi-send logic (e.g., "Send 1 USDC to 0x... and 2 EURC to 0x...")
     const hasMultiple = aiCommand.toLowerCase().includes('and');
-    
     if (hasMultiple) {
       addLog(`AI matched multiple intents. Batching transactions...`, 'warning');
       setTimeout(() => {
@@ -209,20 +217,34 @@ export default function App() {
     setAiCommand('');
     setIsAiProcessing(false);
   };
-
-  const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
+    const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
   const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
   const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
   
-  // Calculate Portfolio Ratio
   const numUsdc = parseFloat(balance) || 0;
   const numEurc = parseFloat(eurcBalance) || 0;
   const total = numUsdc + numEurc;
   const usdcPct = total > 0 ? (numUsdc / total) * 100 : 50;
   const eurcPct = total > 0 ? (numEurc / total) * 100 : 50;
-    return (
+
+  return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+            <div className="flex justify-between items-center text-white font-bold">
+              <span>Select Web3 Wallet</span>
+              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white transition-colors">✕</button>
+            </div>
+            <div className="space-y-3 pt-2">
+              <button onClick={() => handleProviderSelect('rabby')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex items-center justify-between text-cyan-400 font-bold transition-all"><span>Rabby Wallet</span> <span className="text-xs bg-cyan-500/10 px-2 py-1 rounded">INSTANT</span></button>
+              <button onClick={() => handleProviderSelect('metamask')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex items-center justify-between text-amber-400 font-bold transition-all"><span>MetaMask</span> <span className="text-xs bg-amber-500/10 px-2 py-1 rounded">POPULAR</span></button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -239,31 +261,27 @@ export default function App() {
               {walletAddress.substring(0,6)}...{walletAddress.substring(walletAddress.length-4)} <LogOut className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={connectWallet} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
-              CONNECT NODE
+            <button onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
+              {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
             </button>
           )}
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-        {/* 🔥 NEW HERO: Visual Portfolio Ring 🔥 */}
         <section className={`border rounded-2xl p-6 md:p-8 flex flex-col md:flex-row gap-8 justify-between items-center relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
-          
           <div className="space-y-4 relative z-10 flex-1">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-500 font-mono"><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
             <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
             <p className={`max-w-lg text-sm md:text-base ${textMuted}`}>Visual representation of your omnichain assets routed through ArcOS.</p>
           </div>
-
           <div className="flex-1 w-full relative z-10 max-w-sm">
             <div className={`p-5 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center">
                 <span className="text-xs font-mono text-cyan-500 font-bold">USDC: {balance}</span>
                 <span className="text-xs font-mono text-fuchsia-500 font-bold">EURC: {eurcBalance}</span>
               </div>
-              {/* The Distribution Bar */}
               <div className="h-3 w-full rounded-full overflow-hidden flex bg-slate-800">
                 <div style={{ width: `${usdcPct}%` }} className="h-full bg-cyan-500 transition-all duration-1000"></div>
                 <div style={{ width: `${eurcPct}%` }} className="h-full bg-fuchsia-500 transition-all duration-1000"></div>
@@ -275,9 +293,7 @@ export default function App() {
             </div>
           </div>
         </section>
-
-        {/* CONTROLS & ACTIVE MODULE */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
           <div className="md:col-span-4 space-y-3">
             <div className={`text-[10px] uppercase tracking-[0.2em] font-mono mb-4 ${textMuted}`}>COMMAND MODULES</div>
             {modules.map((mod) => {
@@ -296,7 +312,8 @@ export default function App() {
               );
             })}
           </div>
-                    <div className="md:col-span-8 space-y-6">
+
+          <div className="md:col-span-8 space-y-6">
             <section className={`border rounded-2xl p-6 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
               {/* 🔥 MODULE 1: AI BATCH DELEGATE 🔥 */}
               {activeModule === 'ai_batch' && (
