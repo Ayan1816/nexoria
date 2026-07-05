@@ -174,46 +174,66 @@ export default function App() {
     setIsChecking(false);
   };
 
+  // 🔥 UPDATED: AI Multi-Tasking Brain 🔥
   const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider) return;
     addLog(`[AI INPUT] ${aiCommand}`, 'info');
     setIsAiProcessing(true);
     
-    const hasMultiple = aiCommand.toLowerCase().includes('and');
-    if (hasMultiple) {
-      addLog(`AI matched multiple intents. Batching transactions...`, 'warning');
-      setTimeout(() => {
-        addLog(`ERROR: Contract Multi-call not deployed. Falling back to single execution...`, 'error');
-        setIsAiProcessing(false);
-      }, 2000);
+    // Split the command by "and" or commas to find multiple intents
+    const commandParts = aiCommand.toLowerCase().split(/\s+and\s+|,/);
+    let intents = [];
+    const regex = /(?:send|transfer|route)\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
+
+    for (let part of commandParts) {
+      const match = part.match(regex);
+      if (match) {
+        intents.push({
+          amount: match[1],
+          token: match[2] ? match[2].toUpperCase() : 'USDC',
+          to: match[3]
+        });
+      }
+    }
+
+    if (intents.length === 0) {
+      addLog(`AI didn't understand. Format: "Send 1 USDC to 0x... and 2 EURC to 0x..."`, 'warning');
+      setIsAiProcessing(false);
+      setAiCommand('');
       return;
     }
 
-    const match = aiCommand.match(/(?:send|transfer)\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i);
-    if (match) {
-      const [_, amount, token, to] = match;
-      const symbol = (token || 'USDC').toUpperCase();
-      addLog(`AI executing: Route ${amount} ${symbol} to ${to.substring(0,6)}...`, 'process');
+    if (intents.length > 1) {
+      addLog(`AI matched MULTIPLE intents (${intents.length}). Initiating Sequential Batching...`, 'process');
+    }
+
+    // Process each intent one by one (100% Real on-chain sequential execution)
+    for (let i = 0; i < intents.length; i++) {
+      const intent = intents[i];
+      addLog(`[Task ${i+1}/${intents.length}] AI executing: Route ${intent.amount} ${intent.token} to ${intent.to.substring(0,6)}...`, 'process');
       
       try {
         let txHash;
-        if (symbol === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
-          txHash = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to, value: '0x' + val }] });
+        if (intent.token === 'USDC') {
+          const val = BigInt(Math.floor(parseFloat(intent.amount) * 1e18)).toString(16);
+          txHash = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: intent.to, value: '0x' + val }] });
         } else {
           const provider = new window.ethers.BrowserProvider(activeProvider);
           const signer = await provider.getSigner();
           const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
           const decimals = await contract.decimals();
-          txHash = (await contract.transfer(to, window.ethers.parseUnits(amount, decimals))).hash;
+          const tx = await contract.transfer(intent.to, window.ethers.parseUnits(intent.amount, decimals));
+          txHash = tx.hash;
         }
-        addLog(`AI Execution Success! TX: ${txHash}`, 'success');
-        confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
-        setTimeout(() => updateBalances(activeProvider, walletAddress), 4000);
-      } catch(e) { addLog(`AI Execution Failed.`, 'error'); }
-    } else {
-      addLog(`AI didn't understand. Format: "Send 1 USDC to 0x..."`, 'info');
+        addLog(`[Task ${i+1}/${intents.length}] Execution Success! TX: ${txHash}`, 'success');
+      } catch(e) { 
+        addLog(`[Task ${i+1}/${intents.length}] Execution Failed or Rejected by User. Stopping sequence.`, 'error');
+        break; // Stop further executions if one fails
+      }
     }
+
+    confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+    setTimeout(() => updateBalances(activeProvider, walletAddress), 4000);
     setAiCommand('');
     setIsAiProcessing(false);
   };
@@ -322,9 +342,9 @@ export default function App() {
                     <Bot className="w-6 h-6 text-cyan-500" />
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>AI Batch Delegate</h3>
                   </div>
-                  <p className={`text-sm ${textMuted}`}>Route liquidity autonomously. Try asking the AI to send assets.</p>
+                  <p className={`text-sm ${textMuted}`}>Route liquidity autonomously. Try asking the AI to send multiple assets.</p>
                   <div className={`p-4 rounded-xl border flex gap-2 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder='Try: "Send 1.5 USDC to 0x..."' className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
+                    <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder='Try: "Send 1 USDC to 0x... and 2 EURC to 0x..."' className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
                     <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 text-white font-bold rounded-lg hover:bg-cyan-400 disabled:opacity-50 flex items-center gap-2">
                       {isAiProcessing ? <Cpu className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </button>
