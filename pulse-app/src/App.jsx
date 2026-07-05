@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Bot, ShieldAlert, Activity, Terminal, Zap, LogOut, Sun, Moon, 
-  Cpu, ArrowRight, ShieldCheck, CheckCircle
+  Cpu, ArrowRight, ShieldCheck, CheckCircle, History, Droplet
 } from 'lucide-react';
 
 const modules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', description: 'Command the AI to execute multiple transactions across different assets simultaneously.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: 'AI CORE' },
+  { id: 'history', title: 'Transaction Ledger', subtitle: 'ON-CHAIN RECEIPTS', description: 'Real-time history of all your executed transactions and transfers in this session.', accent: 'from-teal-400 to-emerald-500', icon: History, stat: 'LIVE SYNC' },
   { id: 'security', title: 'Token Security Matrix', subtitle: 'SMART REVOKE', description: 'Scan and revoke third-party smart contract allowances to protect your liquidity.', accent: 'from-amber-400 to-rose-500', icon: ShieldAlert, stat: 'SCANNER' },
   { id: 'telemetry', title: 'Arc Network Telemetry', subtitle: 'LIVE NODE DATA', description: 'Direct RPC feed from Arc Testnet showing real-time block generation and gas metrics.', accent: 'from-emerald-400 to-teal-500', icon: Activity, stat: 'LIVE SYNC' }
 ];
@@ -28,8 +29,9 @@ export default function App() {
   const [balance, setBalance] = useState('0.00');
   const [eurcBalance, setEurcBalance] = useState('0.00');
   
-  // Terminal Logs
+  // Terminal & History
   const [terminalLogs, setTerminalLogs] = useState([]);
+  const [txHistory, setTxHistory] = useState([]);
   const terminalEndRef = useRef(null);
 
   // Feature States
@@ -137,7 +139,8 @@ export default function App() {
   };
 
   const disconnectWallet = () => {
-    setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00'); setTerminalLogs([]);
+    setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00'); 
+    setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
     const checkAllowance = async () => {
@@ -174,13 +177,11 @@ export default function App() {
     setIsChecking(false);
   };
 
-  // 🔥 UPDATED: AI Multi-Tasking Brain 🔥
   const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider) return;
     addLog(`[AI INPUT] ${aiCommand}`, 'info');
     setIsAiProcessing(true);
     
-    // Split the command by "and" or commas to find multiple intents
     const commandParts = aiCommand.toLowerCase().split(/\s+and\s+|,/);
     let intents = [];
     const regex = /(?:send|transfer|route)\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i;
@@ -197,7 +198,7 @@ export default function App() {
     }
 
     if (intents.length === 0) {
-      addLog(`AI didn't understand. Format: "Send 1 USDC to 0x... and 2 EURC to 0x..."`, 'warning');
+      addLog(`AI didn't understand. Format: "Send 1 USDC to 0x..."`, 'warning');
       setIsAiProcessing(false);
       setAiCommand('');
       return;
@@ -207,7 +208,6 @@ export default function App() {
       addLog(`AI matched MULTIPLE intents (${intents.length}). Initiating Sequential Batching...`, 'process');
     }
 
-    // Process each intent one by one (100% Real on-chain sequential execution)
     for (let i = 0; i < intents.length; i++) {
       const intent = intents[i];
       addLog(`[Task ${i+1}/${intents.length}] AI executing: Route ${intent.amount} ${intent.token} to ${intent.to.substring(0,6)}...`, 'process');
@@ -226,9 +226,13 @@ export default function App() {
           txHash = tx.hash;
         }
         addLog(`[Task ${i+1}/${intents.length}] Execution Success! TX: ${txHash}`, 'success');
+        
+        // Save to History
+        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: intent.token, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
+        
       } catch(e) { 
         addLog(`[Task ${i+1}/${intents.length}] Execution Failed or Rejected by User. Stopping sequence.`, 'error');
-        break; // Stop further executions if one fails
+        break; 
       }
     }
 
@@ -293,10 +297,17 @@ export default function App() {
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-4 relative z-10 flex-1">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-500 font-mono"><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
-            <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <h1 className={`text-3xl md:text-5xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
+              <button onClick={() => window.open('https://faucet.circle.com/', '_blank')} className="w-fit px-4 py-2 bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/20 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-400 hover:text-white hover:bg-cyan-500/40 transition-all flex items-center gap-2 shadow-sm">
+                <Droplet className="w-4 h-4" /> TEST FAUCET
+              </button>
+            </div>
+            
             <p className={`max-w-lg text-sm md:text-base ${textMuted}`}>Visual representation of your omnichain assets routed through ArcOS.</p>
           </div>
-          <div className="flex-1 w-full relative z-10 max-w-sm">
+          <div className="flex-1 w-full relative z-10 max-w-sm mt-4 md:mt-0">
             <div className={`p-5 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center">
                 <span className="text-xs font-mono text-cyan-500 font-bold">USDC: {balance}</span>
@@ -335,6 +346,7 @@ export default function App() {
 
           <div className="md:col-span-8 space-y-6">
             <section className={`border rounded-2xl p-6 relative overflow-hidden transition-colors duration-500 ${bgCard}`}>
+              
               {/* 🔥 MODULE 1: AI BATCH DELEGATE 🔥 */}
               {activeModule === 'ai_batch' && (
                 <div className="space-y-4">
@@ -342,17 +354,61 @@ export default function App() {
                     <Bot className="w-6 h-6 text-cyan-500" />
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>AI Batch Delegate</h3>
                   </div>
-                  <p className={`text-sm ${textMuted}`}>Route liquidity autonomously. Try asking the AI to send multiple assets.</p>
-                  <div className={`p-4 rounded-xl border flex gap-2 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder='Try: "Send 1 USDC to 0x... and 2 EURC to 0x..."' className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
-                    <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 text-white font-bold rounded-lg hover:bg-cyan-400 disabled:opacity-50 flex items-center gap-2">
-                      {isAiProcessing ? <Cpu className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-                    </button>
+                  <p className={`text-sm ${textMuted}`}>Hello! I am ArcOS AI. I can help you route funds securely. Try asking me to send multiple assets.</p>
+                  
+                  <div className={`p-4 rounded-xl border flex flex-col gap-3 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
+                    <div className="flex gap-2">
+                      <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder='Try: "Send 1 USDC to 0x..."' className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
+                      <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 text-white font-bold rounded-lg hover:bg-cyan-400 disabled:opacity-50 flex items-center gap-2">
+                        {isAiProcessing ? <Cpu className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    
+                    {/* ✨ AI Suggestion Chips ✨ */}
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      <button onClick={() => setAiCommand('Send 2 USDC to 0x111aab63c14d781cdecaaf8ab8ac46c7c7441a8e')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-900/40' : 'bg-slate-200 border-slate-300 text-cyan-700 hover:bg-cyan-100'}`}>
+                        💡 Fast Send
+                      </button>
+                      <button onClick={() => setAiCommand('Send 1 USDC to 0x111aab63c14d781cdecaaf8ab8ac46c7c7441a8e and 2 EURC to 0x222222eABc2BC2c7Bb1F21003f0a260052475B')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-fuchsia-400 hover:bg-fuchsia-900/40' : 'bg-slate-200 border-slate-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
+                        ⚡ Batch Transfer
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* 🔥 MODULE 2: TOKEN SECURITY MATRIX 🔥 */}
+              {/* 🔥 MODULE 2: TRANSACTION LEDGER (HISTORY) 🔥 */}
+              {activeModule === 'history' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
+                    <History className="w-6 h-6 text-teal-500" />
+                    <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Transaction Ledger</h3>
+                  </div>
+                  {txHistory.length === 0 ? (
+                    <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet in this session. Send some assets!</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {txHistory.map((tx) => (
+                        <div key={tx.id} className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${isDark ? 'bg-slate-950/50 border-teal-500/20' : 'bg-teal-50/50 border-teal-200'}`}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-teal-500/20 text-teal-500 flex items-center justify-center"><CheckCircle className="w-4 h-4" /></div>
+                            <div>
+                              <div className={`font-bold font-mono text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>Sent {tx.amount} {tx.token}</div>
+                              <div className={`text-[10px] font-mono mt-1 ${textMuted}`}>To: {tx.to.substring(0,8)}... | Time: {tx.time}</div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className={`text-xs font-mono font-bold ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>SUCCESS</div>
+                            <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noreferrer" className={`text-[10px] font-mono hover:underline ${textMuted}`}>View Tx ↗</a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 🔥 MODULE 3: TOKEN SECURITY MATRIX 🔥 */}
               {activeModule === 'security' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
@@ -380,7 +436,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 🔥 MODULE 3: NETWORK TELEMETRY 🔥 */}
+              {/* 🔥 MODULE 4: NETWORK TELEMETRY 🔥 */}
               {activeModule === 'telemetry' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
