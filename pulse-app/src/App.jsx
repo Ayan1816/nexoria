@@ -35,7 +35,6 @@ export default function App() {
   const [aiCommand, setAiCommand] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   
-  // Payroll States
   const [payrollText, setPayrollText] = useState('');
   const [payrollToken, setPayrollToken] = useState('USDC');
   const [isPayrollProcessing, setIsPayrollProcessing] = useState(false);
@@ -45,6 +44,21 @@ export default function App() {
   const [spenderAddress, setSpenderAddress] = useState('');
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
+
+  // 🔥 NEW: Load History from Local Storage on Startup 🔥
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('arcOsTxHistory');
+    if (savedHistory) {
+      try { setTxHistory(JSON.parse(savedHistory)); } catch (e) { console.error("History parse error", e); }
+    }
+  }, []);
+
+  // 🔥 NEW: Save History to Local Storage whenever it changes 🔥
+  useEffect(() => {
+    if (txHistory.length > 0) {
+      localStorage.setItem('arcOsTxHistory', JSON.stringify(txHistory));
+    }
+  }, [txHistory]);
 
   useEffect(() => {
     if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -143,7 +157,7 @@ export default function App() {
 
   const disconnectWallet = () => {
     setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00'); 
-    setTerminalLogs([]); setTxHistory([]);
+    setTerminalLogs([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
     const checkAllowance = async () => {
@@ -211,27 +225,35 @@ export default function App() {
     setAiCommand(''); setIsAiProcessing(false);
   };
 
-  // 🔥 NEW: PAYROLL / AIRDROP LOGIC 🔥
+  // 🔥 SUPER UPGRADED: Smart Parser for Payroll/Airdrop 🔥
   const handlePayrollCommand = async () => {
     if (!payrollText || !activeProvider) return;
     setIsPayrollProcessing(true);
-    addLog(`[PAYROLL] Initiating mass dispersion...`, 'info');
+    addLog(`[PAYROLL] Analyzing list data...`, 'info');
 
     const lines = payrollText.split('\n');
     let tasks = [];
+    
     for (let line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const addressMatch = trimmed.match(/(0x[a-fA-F0-9]{40})/);
-      if (addressMatch) {
-        const withoutAddress = trimmed.replace(addressMatch[0], '');
-        const amountMatch = withoutAddress.match(/([\d.]+)/);
-        if (amountMatch) tasks.push({ to: addressMatch[0], amount: amountMatch[1] });
+      
+      // Smart regex to extract 0x address and amount from ANY format
+      const addrMatch = trimmed.match(/(0x[a-fA-F0-9]{40})/i);
+      const amountMatch = trimmed.replace(/(0x[a-fA-F0-9]{40})/i, '').match(/([0-9]*[.]?[0-9]+)/);
+      
+      if (addrMatch && amountMatch) {
+        tasks.push({ to: addrMatch[1], amount: amountMatch[1] });
       }
     }
 
-    if (tasks.length === 0) { addLog(`[PAYROLL] Invalid format. Use: 0xAddress, amount`, 'warning'); setIsPayrollProcessing(false); return; }
-    addLog(`[PAYROLL] Found ${tasks.length} valid addresses. Executing...`, 'process');
+    if (tasks.length === 0) { 
+      addLog(`[PAYROLL] No valid addresses found. Please check your text.`, 'warning'); 
+      setIsPayrollProcessing(false); 
+      return; 
+    }
+    
+    addLog(`[PAYROLL] Found ${tasks.length} valid recipients. Initiating mass transfer...`, 'process');
 
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
@@ -250,7 +272,7 @@ export default function App() {
         }
         addLog(`[Dispersion ${i+1}/${tasks.length}] Success! TX: ${txHash}`, 'success');
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: task.amount, token: payrollToken, to: task.to, time: new Date().toLocaleTimeString() }, ...prev]);
-      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed/Rejected. Stopping sequence.`, 'error'); break; }
+      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed/Rejected. Stopping batch.`, 'error'); break; }
     }
     confetti({ particleCount: 300, spread: 120, origin: { y: 0.5 } });
     setTimeout(() => updateBalances(activeProvider, walletAddress), 4000);
@@ -383,27 +405,22 @@ export default function App() {
                         {isAiProcessing ? <Cpu className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                       </button>
                     </div>
-                    
                     <div className="flex flex-wrap gap-2 mt-1">
-                      <button onClick={() => setAiCommand('Send 1 USDC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-900/40' : 'bg-slate-200 border-slate-300 text-cyan-700 hover:bg-cyan-100'}`}>
-                        💡 Fast Send
-                      </button>
-                      <button onClick={() => setAiCommand('Send 1 USDC to  and Send 2 EURC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-fuchsia-400 hover:bg-fuchsia-900/40' : 'bg-slate-200 border-slate-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>
-                        ⚡ Batch Transfer
-                      </button>
+                      <button onClick={() => setAiCommand('Send 1 USDC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-900/40' : 'bg-slate-200 border-slate-300 text-cyan-700 hover:bg-cyan-100'}`}>💡 Fast Send</button>
+                      <button onClick={() => setAiCommand('Send 1 USDC to  and Send 2 EURC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-fuchsia-400 hover:bg-fuchsia-900/40' : 'bg-slate-200 border-slate-300 text-fuchsia-700 hover:bg-fuchsia-100'}`}>⚡ Batch Transfer</button>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* 🔥 MODULE 2: PAYROLL & AIRDROP (NEW) 🔥 */}
+              {/* 🔥 MODULE 2: PAYROLL & AIRDROP 🔥 */}
               {activeModule === 'payroll' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
                     <Users className="w-6 h-6 text-indigo-500" />
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Token Airdrop & Payroll</h3>
                   </div>
-                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Format: <span className="text-cyan-500 font-mono bg-cyan-500/10 px-2 py-0.5 rounded">0xAddress, amount</span></p>
+                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Format: <span className="text-cyan-500 font-mono bg-cyan-500/10 px-2 py-0.5 rounded">0xAddress amount</span> (comma or space separated).</p>
 
                   <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
                     <div className="flex gap-2">
@@ -413,7 +430,7 @@ export default function App() {
                     <textarea
                       value={payrollText}
                       onChange={(e) => setPayrollText(e.target.value)}
-                      placeholder={"0x111aab63c14d781cdecaaf8ab8ac46c7c7441a8e, 1.5\n0x222222eABc2BC2c7Bb1F21003f0a260052475B, 2.0"}
+                      placeholder={"0x111a... 1.5\n0x2222... 2.0"}
                       rows="4"
                       className={`w-full bg-transparent text-sm font-mono focus:outline-none p-3 rounded-lg border ${isDark ? 'text-white border-white/10 bg-slate-900' : 'text-slate-900 border-slate-300 bg-white'}`}
                     />
@@ -432,9 +449,12 @@ export default function App() {
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Transaction Ledger</h3>
                   </div>
                   {txHistory.length === 0 ? (
-                    <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet in this session. Send some assets!</div>
+                    <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet. They will automatically save here!</div>
                   ) : (
                     <div className="space-y-3">
+                      <div className="flex justify-end">
+                        <button onClick={() => { setTxHistory([]); localStorage.removeItem('arcOsTxHistory'); }} className="text-[10px] text-rose-500 border border-rose-500/20 px-2 py-1 rounded hover:bg-rose-500/10">Clear History</button>
+                      </div>
                       {txHistory.map((tx) => (
                         <div key={tx.id} className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${isDark ? 'bg-slate-950/50 border-teal-500/20' : 'bg-teal-50/50 border-teal-200'}`}>
                           <div className="flex items-center gap-3">
