@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Bot, ShieldAlert, Activity, Terminal, Zap, LogOut, Sun, Moon, 
-  Cpu, ArrowRight, ShieldCheck, CheckCircle, History, Droplet, RefreshCw, Users
+  Cpu, ArrowRight, ShieldCheck, CheckCircle, History, Droplet, Users
 } from 'lucide-react';
 
 const modules = [
@@ -35,8 +35,10 @@ export default function App() {
   const [aiCommand, setAiCommand] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   
+  // 🔥 Upgraded Payroll States 🔥
   const [payrollText, setPayrollText] = useState('');
   const [payrollToken, setPayrollToken] = useState('USDC');
+  const [globalAmount, setGlobalAmount] = useState('1.0');
   const [isPayrollProcessing, setIsPayrollProcessing] = useState(false);
 
   const [blockNumber, setBlockNumber] = useState('SYNCING...');
@@ -45,20 +47,24 @@ export default function App() {
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
 
-  // 🔥 NEW: Load History from Local Storage on Startup 🔥
+  // 🔥 Wallet-Specific History Load 🔥
   useEffect(() => {
-    const savedHistory = localStorage.getItem('arcOsTxHistory');
-    if (savedHistory) {
-      try { setTxHistory(JSON.parse(savedHistory)); } catch (e) { console.error("History parse error", e); }
+    if (walletAddress) {
+      const savedHistory = localStorage.getItem(`arcTx_${walletAddress}`);
+      if (savedHistory) {
+        try { setTxHistory(JSON.parse(savedHistory)); } catch (e) { setTxHistory([]); }
+      } else {
+        setTxHistory([]);
+      }
     }
-  }, []);
+  }, [walletAddress]);
 
-  // 🔥 NEW: Save History to Local Storage whenever it changes 🔥
+  // 🔥 Wallet-Specific History Save 🔥
   useEffect(() => {
-    if (txHistory.length > 0) {
-      localStorage.setItem('arcOsTxHistory', JSON.stringify(txHistory));
+    if (walletAddress && txHistory.length > 0) {
+      localStorage.setItem(`arcTx_${walletAddress}`, JSON.stringify(txHistory));
     }
-  }, [txHistory]);
+  }, [txHistory, walletAddress]);
 
   useEffect(() => {
     if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -157,23 +163,29 @@ export default function App() {
 
   const disconnectWallet = () => {
     setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00'); 
-    setTerminalLogs([]);
+    setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
-    const checkAllowance = async () => {
+    // 🔥 Fixed Security Scanner Crash Bug 🔥
+  const checkAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
+    setCurrentAllowance(null);
     addLog(`Scanning allowance for spender: ${spenderAddress.substring(0,8)}...`, 'process');
     try {
+      if (!window.ethers.isAddress(spenderAddress)) throw new Error("Invalid address format");
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function allowance(address, address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
       const allow = await contract.allowance(walletAddress, spenderAddress);
       const dec = await contract.decimals();
       const formatted = window.ethers.formatUnits(allow, dec);
-      setCurrentAllowance(formatted);
-      addLog(`Allowance found: ${formatted} ${tokenToCheck}`, formatted > 0 ? 'warning' : 'success');
-    } catch (e) { addLog(`Scan failed: check address.`, 'error'); }
-    setIsChecking(false);
+      setCurrentAllowance(formatted.toString());
+      addLog(`Allowance found: ${formatted} EURC`, parseFloat(formatted) > 0 ? 'warning' : 'success');
+    } catch (e) { 
+      addLog(`Scan failed: Check if address is valid.`, 'error'); 
+    } finally {
+      setIsChecking(false);
+    }
   };
 
   const revokeAllowance = async () => {
@@ -225,7 +237,7 @@ export default function App() {
     setAiCommand(''); setIsAiProcessing(false);
   };
 
-  // 🔥 SUPER UPGRADED: Smart Parser for Payroll/Airdrop 🔥
+  // 🔥 UPGRADED PAYROLL: Support for Raw Address Lists + Global Amount 🔥
   const handlePayrollCommand = async () => {
     if (!payrollText || !activeProvider) return;
     setIsPayrollProcessing(true);
@@ -238,17 +250,20 @@ export default function App() {
       const trimmed = line.trim();
       if (!trimmed) continue;
       
-      // Smart regex to extract 0x address and amount from ANY format
       const addrMatch = trimmed.match(/(0x[a-fA-F0-9]{40})/i);
-      const amountMatch = trimmed.replace(/(0x[a-fA-F0-9]{40})/i, '').match(/([0-9]*[.]?[0-9]+)/);
-      
-      if (addrMatch && amountMatch) {
-        tasks.push({ to: addrMatch[1], amount: amountMatch[1] });
+      if (addrMatch) {
+        const address = addrMatch[1];
+        const lineWithoutAddr = trimmed.replace(address, '');
+        const amountMatch = lineWithoutAddr.match(/([0-9]*[.]?[0-9]+)/);
+        
+        // If user typed an amount next to address, use it. Otherwise use the Global Amount!
+        const finalAmount = amountMatch ? amountMatch[1] : globalAmount;
+        tasks.push({ to: address, amount: finalAmount });
       }
     }
 
     if (tasks.length === 0) { 
-      addLog(`[PAYROLL] No valid addresses found. Please check your text.`, 'warning'); 
+      addLog(`[PAYROLL] No valid addresses found.`, 'warning'); 
       setIsPayrollProcessing(false); 
       return; 
     }
@@ -420,17 +435,28 @@ export default function App() {
                     <Users className="w-6 h-6 text-indigo-500" />
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Token Airdrop & Payroll</h3>
                   </div>
-                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Format: <span className="text-cyan-500 font-mono bg-cyan-500/10 px-2 py-0.5 rounded">0xAddress amount</span> (comma or space separated).</p>
+                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Just paste the addresses below!</p>
 
                   <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <div className="flex gap-2">
-                       <button onClick={() => setPayrollToken('USDC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'USDC' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>USDC</button>
-                       <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>EURC</button>
+                    
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex-1">
+                         <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>GLOBAL AMOUNT (Per Wallet)</label>
+                         <input type="number" step="0.01" value={globalAmount} onChange={e => setGlobalAmount(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono focus:outline-none ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                      </div>
+                      <div className="flex-1">
+                         <label className={`block text-[10px] font-mono mb-2 ${textMuted}`}>SELECT TOKEN</label>
+                         <div className="flex gap-2">
+                           <button onClick={() => setPayrollToken('USDC')} className={`flex-1 py-2.5 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'USDC' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>USDC</button>
+                           <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2.5 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>EURC</button>
+                         </div>
+                      </div>
                     </div>
+
                     <textarea
                       value={payrollText}
                       onChange={(e) => setPayrollText(e.target.value)}
-                      placeholder={"0x111a... 1.5\n0x2222... 2.0"}
+                      placeholder={"0x111a...\n0x2222...\n0x3333..."}
                       rows="4"
                       className={`w-full bg-transparent text-sm font-mono focus:outline-none p-3 rounded-lg border ${isDark ? 'text-white border-white/10 bg-slate-900' : 'text-slate-900 border-slate-300 bg-white'}`}
                     />
@@ -449,11 +475,11 @@ export default function App() {
                     <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Transaction Ledger</h3>
                   </div>
                   {txHistory.length === 0 ? (
-                    <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet. They will automatically save here!</div>
+                    <div className={`text-center py-10 font-mono text-sm ${textMuted}`}>No transactions recorded yet for this wallet.</div>
                   ) : (
                     <div className="space-y-3">
                       <div className="flex justify-end">
-                        <button onClick={() => { setTxHistory([]); localStorage.removeItem('arcOsTxHistory'); }} className="text-[10px] text-rose-500 border border-rose-500/20 px-2 py-1 rounded hover:bg-rose-500/10">Clear History</button>
+                        <button onClick={() => { setTxHistory([]); localStorage.removeItem(`arcTx_${walletAddress}`); }} className="text-[10px] text-rose-500 border border-rose-500/20 px-2 py-1 rounded hover:bg-rose-500/10">Clear Local History</button>
                       </div>
                       {txHistory.map((tx) => (
                         <div key={tx.id} className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${isDark ? 'bg-slate-950/50 border-teal-500/20' : 'bg-teal-50/50 border-teal-200'}`}>
@@ -496,7 +522,7 @@ export default function App() {
                     </div>
                     {currentAllowance !== null && (
                       <div className={`p-3 rounded border text-sm font-mono text-center ${parseFloat(currentAllowance) > 0 ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
-                        Current Allowance: {currentAllowance} {tokenToCheck}
+                        Current Allowance: {currentAllowance} EURC
                       </div>
                     )}
                   </div>
