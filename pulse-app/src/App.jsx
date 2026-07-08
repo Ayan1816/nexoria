@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Bot, ShieldAlert, Activity, Terminal, Zap, LogOut, Sun, Moon, 
-  Cpu, ArrowRight, ShieldCheck, CheckCircle, History, Droplet
+  Cpu, ArrowRight, ShieldCheck, CheckCircle, History, Droplet, RefreshCw, Users
 } from 'lucide-react';
 
 const modules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', description: 'Command the AI to execute multiple transactions across different assets simultaneously.', accent: 'from-cyan-400 to-blue-500', icon: Bot, stat: 'AI CORE' },
+  { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', description: 'Distribute tokens to multiple addresses at once. Paste your list and execute.', accent: 'from-indigo-400 to-purple-500', icon: Users, stat: 'BATCH SENDER' },
   { id: 'history', title: 'Transaction Ledger', subtitle: 'ON-CHAIN RECEIPTS', description: 'Real-time history of all your executed transactions and transfers in this session.', accent: 'from-teal-400 to-emerald-500', icon: History, stat: 'LIVE SYNC' },
   { id: 'security', title: 'Token Security Matrix', subtitle: 'SMART REVOKE', description: 'Scan and revoke third-party smart contract allowances to protect your liquidity.', accent: 'from-amber-400 to-rose-500', icon: ShieldAlert, stat: 'SCANNER' },
   { id: 'telemetry', title: 'Arc Network Telemetry', subtitle: 'LIVE NODE DATA', description: 'Direct RPC feed from Arc Testnet showing real-time block generation and gas metrics.', accent: 'from-emerald-400 to-teal-500', icon: Activity, stat: 'LIVE SYNC' }
@@ -19,28 +20,29 @@ export default function App() {
   const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(modules[0].id);
   
-  // Wallet & Connection States
   const [walletAddress, setWalletAddress] = useState(null);
   const [activeProvider, setActiveProvider] = useState(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   
-  // Balances
   const [balance, setBalance] = useState('0.00');
   const [eurcBalance, setEurcBalance] = useState('0.00');
   
-  // Terminal & History
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [txHistory, setTxHistory] = useState([]);
   const terminalEndRef = useRef(null);
 
-  // Feature States
   const [aiCommand, setAiCommand] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  
+  // Payroll States
+  const [payrollText, setPayrollText] = useState('');
+  const [payrollToken, setPayrollToken] = useState('USDC');
+  const [isPayrollProcessing, setIsPayrollProcessing] = useState(false);
+
   const [blockNumber, setBlockNumber] = useState('SYNCING...');
   const [gasPrice, setGasPrice] = useState('SYNCING...');
   const [spenderAddress, setSpenderAddress] = useState('');
-  const [tokenToCheck, setTokenToCheck] = useState('EURC');
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
 
@@ -163,13 +165,11 @@ export default function App() {
   const revokeAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
-    addLog(`Initiating REVOKE transaction for ${spenderAddress.substring(0,8)}...`, 'process');
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const signer = await provider.getSigner();
       const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function approve(address, uint256) returns (bool)"], signer);
       const tx = await contract.approve(spenderAddress, 0);
-      addLog(`Revoke Tx sent: ${tx.hash}`, 'info');
       await tx.wait();
       setCurrentAllowance('0.0');
       addLog(`REVOKE SUCCESSFUL. Funds secured.`, 'success');
@@ -178,34 +178,18 @@ export default function App() {
     setIsChecking(false);
   };
 
-  // 🔥 AI Logic: Matches exactly 0x... addresses filled by user 🔥
   const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider) return;
     addLog(`[AI INPUT] ${aiCommand}`, 'info');
     setIsAiProcessing(true);
-    
     const regex = /send\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
-    let match;
-    let intents = [];
-    
-    while ((match = regex.exec(aiCommand)) !== null) {
-      intents.push({
-        amount: match[1],
-        token: (match[2] || 'USDC').toUpperCase(),
-        to: match[3]
-      });
-    }
-
-    if (intents.length === 0) {
-      addLog(`AI didn't understand or missing valid 0x address. Format: "Send 1 USDC to 0x..."`, 'warning');
-      setIsAiProcessing(false);
-      return;
-    }
+    let match, intents = [];
+    while ((match = regex.exec(aiCommand)) !== null) { intents.push({ amount: match[1], token: (match[2] || 'USDC').toUpperCase(), to: match[3] }); }
+    if (intents.length === 0) { addLog(`AI didn't understand. Format: "Send 1 USDC to 0x..."`, 'warning'); setIsAiProcessing(false); return; }
 
     for (let i = 0; i < intents.length; i++) {
       const intent = intents[i];
       addLog(`[Task ${i+1}/${intents.length}] AI Executing: Route ${intent.amount} ${intent.token} to ${intent.to.substring(0,6)}...`, 'process');
-      
       try {
         let txHash;
         if (intent.token === 'USDC') {
@@ -215,25 +199,62 @@ export default function App() {
           const provider = new window.ethers.BrowserProvider(activeProvider);
           const signer = await provider.getSigner();
           const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const decimals = await contract.decimals();
-          const tx = await contract.transfer(intent.to, window.ethers.parseUnits(intent.amount, decimals));
+          const tx = await contract.transfer(intent.to, window.ethers.parseUnits(intent.amount, await contract.decimals()));
           txHash = tx.hash;
         }
         addLog(`[Task ${i+1}/${intents.length}] Execution Success! TX: ${txHash}`, 'success');
-        
-        // Save to History (Transaction Ledger)
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: intent.token, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
-        
-      } catch(e) { 
-        addLog(`[Task ${i+1}/${intents.length}] Execution Failed or Rejected by User. Stopping sequence.`, 'error');
-        break; 
+      } catch(e) { addLog(`[Task ${i+1}/${intents.length}] Failed/Rejected.`, 'error'); break; }
+    }
+    confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+    setTimeout(() => updateBalances(activeProvider, walletAddress), 4000);
+    setAiCommand(''); setIsAiProcessing(false);
+  };
+
+  // 🔥 NEW: PAYROLL / AIRDROP LOGIC 🔥
+  const handlePayrollCommand = async () => {
+    if (!payrollText || !activeProvider) return;
+    setIsPayrollProcessing(true);
+    addLog(`[PAYROLL] Initiating mass dispersion...`, 'info');
+
+    const lines = payrollText.split('\n');
+    let tasks = [];
+    for (let line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const addressMatch = trimmed.match(/(0x[a-fA-F0-9]{40})/);
+      if (addressMatch) {
+        const withoutAddress = trimmed.replace(addressMatch[0], '');
+        const amountMatch = withoutAddress.match(/([\d.]+)/);
+        if (amountMatch) tasks.push({ to: addressMatch[0], amount: amountMatch[1] });
       }
     }
 
-    confetti({ particleCount: 200, spread: 100, origin: { y: 0.6 } });
+    if (tasks.length === 0) { addLog(`[PAYROLL] Invalid format. Use: 0xAddress, amount`, 'warning'); setIsPayrollProcessing(false); return; }
+    addLog(`[PAYROLL] Found ${tasks.length} valid addresses. Executing...`, 'process');
+
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      addLog(`[Dispersion ${i+1}/${tasks.length}] Sending ${task.amount} ${payrollToken} to ${task.to.substring(0,6)}...`, 'process');
+      try {
+        let txHash;
+        if (payrollToken === 'USDC') {
+          const val = BigInt(Math.floor(parseFloat(task.amount) * 1e18)).toString(16);
+          txHash = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: task.to, value: '0x' + val }] });
+        } else {
+          const provider = new window.ethers.BrowserProvider(activeProvider);
+          const signer = await provider.getSigner();
+          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
+          const tx = await contract.transfer(task.to, window.ethers.parseUnits(task.amount, await contract.decimals()));
+          txHash = tx.hash;
+        }
+        addLog(`[Dispersion ${i+1}/${tasks.length}] Success! TX: ${txHash}`, 'success');
+        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: task.amount, token: payrollToken, to: task.to, time: new Date().toLocaleTimeString() }, ...prev]);
+      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed/Rejected. Stopping sequence.`, 'error'); break; }
+    }
+    confetti({ particleCount: 300, spread: 120, origin: { y: 0.5 } });
     setTimeout(() => updateBalances(activeProvider, walletAddress), 4000);
-    setAiCommand('');
-    setIsAiProcessing(false);
+    setPayrollText(''); setIsPayrollProcessing(false);
   };
     const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
   const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
@@ -329,7 +350,7 @@ export default function App() {
             {modules.map((mod) => {
               const isActive = activeModule === mod.id;
               const btnClass = isActive 
-                ? (isDark ? 'bg-slate-900 border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.1)]' : 'bg-white border-cyan-500 shadow-md')
+                ? (isDark ? `bg-slate-900 border-${mod.accent.split('-')[1]}/50 shadow-[0_0_20px_rgba(34,211,238,0.1)]` : 'bg-white border-cyan-500 shadow-md')
                 : (isDark ? 'bg-slate-900/50 border-white/5 hover:bg-slate-900' : 'bg-slate-200/60 border-slate-300 hover:bg-white');
               return (
                 <button key={mod.id} onClick={() => setActiveModule(mod.id)} className={`w-full flex flex-col p-4 rounded-xl border transition-all text-left ${btnClass}`}>
@@ -363,7 +384,6 @@ export default function App() {
                       </button>
                     </div>
                     
-                    {/* ✨ AI Suggestion Chips (Empty Addresses as you requested) ✨ */}
                     <div className="flex flex-wrap gap-2 mt-1">
                       <button onClick={() => setAiCommand('Send 1 USDC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border transition-all ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-900/40' : 'bg-slate-200 border-slate-300 text-cyan-700 hover:bg-cyan-100'}`}>
                         💡 Fast Send
@@ -376,7 +396,35 @@ export default function App() {
                 </div>
               )}
 
-              {/* 🔥 MODULE 2: TRANSACTION LEDGER (HISTORY) 🔥 */}
+              {/* 🔥 MODULE 2: PAYROLL & AIRDROP (NEW) 🔥 */}
+              {activeModule === 'payroll' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
+                    <Users className="w-6 h-6 text-indigo-500" />
+                    <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Token Airdrop & Payroll</h3>
+                  </div>
+                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Format: <span className="text-cyan-500 font-mono bg-cyan-500/10 px-2 py-0.5 rounded">0xAddress, amount</span></p>
+
+                  <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
+                    <div className="flex gap-2">
+                       <button onClick={() => setPayrollToken('USDC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'USDC' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>USDC</button>
+                       <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-sm border transition-all ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500 hover:bg-slate-800'}`}>EURC</button>
+                    </div>
+                    <textarea
+                      value={payrollText}
+                      onChange={(e) => setPayrollText(e.target.value)}
+                      placeholder={"0x111aab63c14d781cdecaaf8ab8ac46c7c7441a8e, 1.5\n0x222222eABc2BC2c7Bb1F21003f0a260052475B, 2.0"}
+                      rows="4"
+                      className={`w-full bg-transparent text-sm font-mono focus:outline-none p-3 rounded-lg border ${isDark ? 'text-white border-white/10 bg-slate-900' : 'text-slate-900 border-slate-300 bg-white'}`}
+                    />
+                    <button onClick={handlePayrollCommand} disabled={isPayrollProcessing || !payrollText} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-lg hover:bg-indigo-400 disabled:opacity-50 flex items-center justify-center gap-2 transition-all">
+                      {isPayrollProcessing ? <Cpu className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} EXECUTE AIRDROP
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 🔥 MODULE 3: TRANSACTION LEDGER (HISTORY) 🔥 */}
               {activeModule === 'history' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
@@ -407,7 +455,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 🔥 MODULE 3: TOKEN SECURITY MATRIX 🔥 */}
+              {/* 🔥 MODULE 4: TOKEN SECURITY MATRIX 🔥 */}
               {activeModule === 'security' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
@@ -435,7 +483,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 🔥 MODULE 4: NETWORK TELEMETRY 🔥 */}
+              {/* 🔥 MODULE 5: NETWORK TELEMETRY 🔥 */}
               {activeModule === 'telemetry' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4">
