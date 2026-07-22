@@ -592,4 +592,35 @@ export default function App() {
                   <div className="flex items-center gap-2 mb-4 border-b border-white/10 pb-4"><Activity className="w-6 h-6 text-emerald-500" /><h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Arc Network Telemetry</h3></div>
                   <p className={`text-sm ${textMuted}`}>Live Node Polling. Fetching real-time RPC data from Arc Testnet.</p>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className={`p-6 rounded-xl border text-center ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}><div className={`text-[10px] font-mono mb-2 tracking-widest ${textMuted}`}>LATEST BLOCK</div><div className="text-3xl font-bold text-
+                    <div className={`p-6 rounded-xl border text-center ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}><div className={`text-[10px] font-mono mb-2 tracking-widest ${textMuted}`}>LATEST BLOCK</div><div className="text-3xl font-bold text-cyan-500 font-mono animate-pulse">{blockNumber}</div></div>
+                    <div className={`p-6 rounded-xl border text-center ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}><div className={`text-[10px] font-mono mb-2 tracking-widest ${textMuted}`}>LIVE GAS PRICE</div><div className="text-3xl font-bold text-emerald-500 font-mono">{gasPrice}</div></div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* TERMINAL */}
+            <section className={`border rounded-2xl overflow-hidden shadow-lg ${isDark ? 'bg-black border-cyan-500/30' : 'bg-slate-900 border-slate-800'}`}>
+              <div className="bg-slate-900 p-2 flex items-center gap-2 border-b border-white/10">
+                <Terminal className="w-4 h-4 text-slate-400" />
+                <span className="text-[10px] font-mono text-slate-400 tracking-widest">SYSTEM TERMINAL / LIVE LOGS</span>
+              </div>
+              <div className="p-4 h-48 overflow-y-auto font-mono text-xs space-y-2">
+                {terminalLogs.length === 0 && <div className="text-slate-600">Waiting for connection...</div>}
+                {terminalLogs.map((log, idx) => {
+                  let colorClass = 'text-slate-300';
+                  if (log.type === 'process') colorClass = 'text-cyan-400';
+                  if (log.type === 'success') colorClass = 'text-emerald-400';
+                  if (log.type === 'error') colorClass = 'text-rose-400';
+                  if (log.type === 'warning') colorClass = 'text-amber-400';
+                  return (<div key={idx} className={colorClass}><span className="text-slate-600">[{log.time}]</span> {log.msg}</div>);
+                })}
+                <div ref={terminalEndRef} />
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
