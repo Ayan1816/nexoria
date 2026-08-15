@@ -14,6 +14,11 @@ const coreModules = [
 ];
 
 const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
+const FACTORY_CONTRACT_ADDRESS = "0x50Fc27E539EcfbdAC883Cd2b68a7EA2c992652c6";
+const FACTORY_ABI = [
+  "function createToken(string memory _name, string memory _symbol, uint256 _supply) external returns (address)",
+  "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 supply)"
+];
 const arcChainIdHex = '0x4cef52';
 export default function App() {
   const [isDark, setIsDark] = useState(true);
@@ -82,6 +87,28 @@ export default function App() {
     }
   }, [txHistory, walletAddress]);
 
+  // Restore & reschedule any pending automation tasks after page reload
+  useEffect(() => {
+    if (!walletAddress) return;
+    const saved = localStorage.getItem(`arcTasks_${walletAddress}`);
+    if (!saved) return;
+    try {
+      const tasks = JSON.parse(saved);
+      tasks.filter(t => t.status === 'Pending').forEach(task => {
+        const remaining = task.triggerAt - Date.now();
+        if (remaining <= 0) executeScheduledTask(task);
+        else setTimeout(() => executeScheduledTask(task), remaining);
+      });
+      setActiveTasks(tasks);
+    } catch (e) {}
+  }, [walletAddress]);
+    // Persist automation tasks so they survive a page refresh
+  useEffect(() => {
+    if (walletAddress && activeTasks.length > 0) {
+      localStorage.setItem(`arcTasks_${walletAddress}`, JSON.stringify(activeTasks));
+    }
+  }, [activeTasks, walletAddress]);
+
   useEffect(() => { 
     if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" }); 
   }, [terminalLogs]);
@@ -89,6 +116,30 @@ export default function App() {
   const addLog = (msg, type = 'info') => {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs(prev => [...prev, { time, msg, type }]);
+  };
+
+  // SHARED TRANSFER HELPER — used by AI batch, payroll, automation
+  const sendToken = async (token, to, amount) => {
+    if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
+    if (token === 'USDC') {
+      const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
+      const tx = await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: walletAddress, to, value: '0x' + val }]
+      });
+      return tx;
+    } else {
+      const provider = new window.ethers.BrowserProvider(activeProvider);
+      const signer = await provider.getSigner();
+      const contract = new window.ethers.Contract(
+        EURC_CONTRACT_ADDRESS,
+        ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"],
+        signer
+      );
+      const decimals = await contract.decimals();
+      const tx = await contract.transfer(to, window.ethers.parseUnits(amount, decimals));
+      return tx.hash;
+    }
   };
 
   const fetchNetworkData = async (provider) => {
@@ -109,14 +160,34 @@ export default function App() {
     return () => clearInterval(interval);
   }, [activeProvider]);
 
+  // ACCOUNT / NETWORK CHANGE LISTENER
+  useEffect(() => {
+    if (!activeProvider) return;
+    const handleAccountsChanged = (accounts) => {
+      if (!accounts || accounts.length === 0) {
+        disconnectWallet();
+      } else {
+        setWalletAddress(accounts[0]);
+        updateBalances(activeProvider, accounts[0]);
+        addLog(`Account switched: ${accounts[0]}`, 'warning');
+      }
+    };
+    const handleChainChanged = () => { window.location.reload(); };
+    activeProvider.on && activeProvider.on('accountsChanged', handleAccountsChanged);
+    activeProvider.on && activeProvider.on('chainChanged', handleChainChanged);
+    return () => {
+      activeProvider.removeListener && activeProvider.removeListener('accountsChanged', handleAccountsChanged);
+      activeProvider.removeListener && activeProvider.removeListener('chainChanged', handleChainChanged);
+    };
+  }, [activeProvider]);
+
   const updateBalances = async (provider, address) => {
     if (!provider || !address) return;
     try {
       addLog(`Fetching omni-balances for ${address.substring(0,6)}...`, 'process');
       const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
       setBalance((parseInt(balHex, 16) / 1e18).toFixed(4));
-      
-      try {
+            try {
         if (window.ethers) {
           const ethersProvider = new window.ethers.BrowserProvider(provider);
           const eurcContract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], ethersProvider);
@@ -183,23 +254,10 @@ export default function App() {
       const intent = intents[i];
       addLog(`[Task ${i+1}/${intents.length}] Routing ${intent.amount} ${intent.token} to ${intent.to.substring(0,6)}...`, 'process');
       try {
-        let txHash;
-        if (intent.token === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(intent.amount) * 1e18)).toString(16);
-          txHash = await activeProvider.request({ 
-            method: 'eth_sendTransaction', 
-            params: [{ from: walletAddress, to: intent.to, value: '0x' + val }] 
-          });
-        } else {
-          const provider = new window.ethers.BrowserProvider(activeProvider);
-          const signer = await provider.getSigner();
-          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const tx = await contract.transfer(intent.to, window.ethers.parseUnits(intent.amount, await contract.decimals())); 
-          txHash = tx.hash;
-        }
+        const txHash = await sendToken(intent.token, intent.to, intent.amount);
         addLog(`[Task ${i+1}/${intents.length}] Success! TX: ${txHash}`, 'success');
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: intent.token, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
-      } catch(e) { addLog(`[Task ${i+1}/${intents.length}] User rejected or failed.`, 'error'); break; }
+      } catch(e) { addLog(`[Task ${i+1}/${intents.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
     }
     confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
     setAiCommand(''); setIsAiProcessing(false);
@@ -225,56 +283,45 @@ export default function App() {
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i]; addLog(`[Dispersion ${i+1}/${tasks.length}] Sending ${task.amount} ${payrollToken}...`, 'process');
       try {
-        let txHash;
-        if (payrollToken === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(task.amount) * 1e18)).toString(16);
-          txHash = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: task.to, value: '0x' + val }] });
-        } else {
-          const provider = new window.ethers.BrowserProvider(activeProvider);
-          const signer = await provider.getSigner();
-          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const tx = await contract.transfer(task.to, window.ethers.parseUnits(task.amount, await contract.decimals())); txHash = tx.hash;
-        }
+        const txHash = await sendToken(payrollToken, task.to, task.amount);
         addLog(`[Dispersion ${i+1}/${tasks.length}] Success! TX: ${txHash}`, 'success');
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: task.amount, token: payrollToken, to: task.to, time: new Date().toLocaleTimeString() }, ...prev]);
-      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed.`, 'error'); break; }
+      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
     }
     confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
     setPayrollText(''); setIsPayrollProcessing(false);
   };
+    // REAL AUTOMATION TRIGGER (persists across page refresh)
+  const executeScheduledTask = async (task) => {
+    addLog(`[AGENT] Executing scheduled transfer...`, 'process');
+    try {
+      const txHash = await sendToken(task.token, task.address, task.amount);
+      addLog(`[AGENT] Scheduled Execution Success! TX: ${txHash}`, 'success');
+      setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: task.amount, token: task.token, to: task.address, time: new Date().toLocaleTimeString() }, ...prev]);
+      setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Completed' } : t));
+      confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
+    } catch (e) {
+      addLog(`[AGENT] Task failed or rejected.`, 'error');
+      setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Failed' } : t));
+    }
+  };
 
-  // REAL AUTOMATION TRIGGER
   const handleScheduleTask = () => {
     if (!activeProvider || !autoAddress || !autoAmount || !autoTime) return alert("Fill all fields!");
-    const delayMs = parseFloat(autoTime) * 60000; const taskId = Date.now();
+    if (!window.ethers || !window.ethers.isAddress(autoAddress)) return alert("Invalid address!");
+    const delayMs = parseFloat(autoTime) * 60000;
+    const taskId = Date.now();
+    const newTask = { id: taskId, address: autoAddress, amount: autoAmount, token: autoToken, time: autoTime, status: 'Pending', triggerAt: taskId + delayMs };
     addLog(`[AGENT] Task queued: Send ${autoAmount} ${autoToken} in ${autoTime} min.`, 'process');
-    setActiveTasks(prev => [...prev, { id: taskId, address: autoAddress, amount: autoAmount, token: autoToken, time: autoTime, status: 'Pending' }]);
-
-    setTimeout(async () => {
-      addLog(`[AGENT] Executing scheduled transfer to wallet...`, 'process');
-      try {
-        let txHash;
-        if (autoToken === 'USDC') {
-          const val = BigInt(Math.floor(parseFloat(autoAmount) * 1e18)).toString(16);
-          txHash = await activeProvider.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, to: autoAddress, value: '0x' + val }] });
-        } else {
-          const provider = new window.ethers.BrowserProvider(activeProvider);
-          const signer = await provider.getSigner();
-          const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"], signer);
-          const tx = await contract.transfer(autoAddress, window.ethers.parseUnits(autoAmount, await contract.decimals())); txHash = tx.hash;
-        }
-        addLog(`[AGENT] Scheduled Execution Success! TX: ${txHash}`, 'success');
-        setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: autoAmount, token: autoToken, to: autoAddress, time: new Date().toLocaleTimeString() }, ...prev]);
-        setActiveTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'Completed' } : t));
-        confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
-      } catch(e) { addLog(`[AGENT] Task failed or rejected.`, 'error'); setActiveTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'Failed' } : t)); }
-    }, delayMs);
+    setActiveTasks(prev => [...prev, newTask]);
+    setTimeout(() => executeScheduledTask(newTask), delayMs);
     setAutoAddress(''); setAutoAmount('');
   };
 
   // REAL ON-CHAIN PAGER
   const handleSendPager = async () => {
     if (!activeProvider || !pagerAddress || !pagerMessage) return alert("Enter address & message!");
+    if (!window.ethers || !window.ethers.isAddress(pagerAddress)) return alert("Invalid recipient address!");
     setIsPagerSending(true); addLog(`[PAGER] Encoding message to Hex data...`, 'process');
     try {
       const hexData = window.ethers.hexlify(window.ethers.toUtf8Bytes(pagerMessage));
@@ -290,20 +337,27 @@ export default function App() {
     setIsPagerSending(false);
   };
 
-  // REAL TOKEN FORGE
+  // REAL TOKEN FORGE — deploys an actual ERC20 via the on-chain factory contract
   const handleDeployToken = async () => {
     if (!activeProvider || !forgeName || !forgeSymbol || !forgeSupply) return alert("Fill token details!");
-    setIsForging(true); addLog(`[FORGE] Compiling Smart Contract byte-code for ${forgeName}...`, 'process');
+    setIsForging(true); addLog(`[FORGE] Deploying ${forgeName} (${forgeSymbol}) via factory...`, 'process');
     try {
-      const hexData = window.ethers.hexlify(window.ethers.toUtf8Bytes(`DEPLOY_TOKEN:${forgeName}:${forgeSymbol}:${forgeSupply}`));
-      const txHash = await activeProvider.request({ 
-        method: 'eth_sendTransaction', 
-        params: [{ from: walletAddress, to: walletAddress, value: '0x0', data: hexData }] 
-      });
-      addLog(`[FORGE] Contract Deployed Successfully! TX: ${txHash}`, 'success');
-      setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: forgeSupply, token: forgeSymbol, to: 'New Contract', time: new Date().toLocaleTimeString() }, ...prev]);
-      confetti({ particleCount: 200 }); setForgeName(''); setForgeSymbol('');
-    } catch (e) { addLog(`[FORGE] Deployment rejected by user.`, 'error'); }
+      const provider = new window.ethers.BrowserProvider(activeProvider);
+      const signer = await provider.getSigner();
+      const factory = new window.ethers.Contract(FACTORY_CONTRACT_ADDRESS, FACTORY_ABI, signer);
+      const tx = await factory.createToken(forgeName, forgeSymbol, forgeSupply);
+      addLog(`[FORGE] Transaction sent, waiting for confirmation...`, 'process');
+      const receipt = await tx.wait();
+
+      const event = receipt.logs
+        .map(log => { try { return factory.interface.parseLog(log); } catch { return null; } })
+        .find(parsed => parsed && parsed.name === 'TokenCreated');
+      const newTokenAddress = event ? event.args.tokenAddress : null;
+
+      addLog(`[FORGE] Token Deployed! Address: ${newTokenAddress || 'check tx on explorer'}`, 'success');
+      setTxHistory(prev => [{ id: Date.now(), hash: tx.hash, amount: forgeSupply, token: forgeSymbol, to: newTokenAddress || 'New Contract', time: new Date().toLocaleTimeString() }, ...prev]);
+      confetti({ particleCount: 200 }); setForgeName(''); setForgeSymbol(''); setForgeSupply('1000000');
+    } catch (e) { addLog(`[FORGE] Deployment failed: ${e.message || 'rejected'}`, 'error'); }
     setIsForging(false);
   };
 
@@ -323,8 +377,7 @@ export default function App() {
     } catch (e) { addLog(`Scan failed. Check contract address.`, 'error'); } 
     setIsChecking(false);
   };
-
-  const revokeAllowance = async () => {
+    const revokeAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
     try {
@@ -436,8 +489,7 @@ export default function App() {
             </div>
           </div>
         </section>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
           
           {/* SIDEBAR: 4 CORE AI MODULES + 1 SYSTEM UTILITIES FOLDER */}
           <div className="md:col-span-4 space-y-6">
@@ -533,8 +585,7 @@ export default function App() {
                   )}
                 </div>
               )}
-
-              {/* 4. ON-CHAIN PAGER */}
+                            {/* 4. ON-CHAIN PAGER */}
               {activeModule === 'pager' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><MessageSquare className="text-fuchsia-500"/> On-Chain Pager</h3>
@@ -574,7 +625,7 @@ export default function App() {
                     
                     {activeUtilityTab === 'security' && (
                       <div className="space-y-4">
-                        <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>CONTRACT ADDRESS TO SCAN</label><input type="text" value={spenderAddress} onChange={e=>setSpenderAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
+                        <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SPENDER ADDRESS TO SCAN</label><input type="text" value={spenderAddress} onChange={e=>setSpenderAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
                         <div className="flex gap-2">
                           <button onClick={checkAllowance} disabled={isChecking || !spenderAddress} className="flex-1 py-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg font-bold text-xs">SCAN ALLOWANCE</button>
                           {currentAllowance !== null && parseFloat(currentAllowance) > 0 && (
