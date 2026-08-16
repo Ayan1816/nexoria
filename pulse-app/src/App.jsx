@@ -3,7 +3,7 @@ import confetti from 'canvas-confetti';
 import {
   Bot, ShieldAlert, Activity, Terminal, Zap, LogOut, Sun, Moon, 
   Cpu, ArrowRight, CheckCircle, History, Droplet, Users, Clock,
-  MessageSquare, Layers, Settings, Shield
+  MessageSquare, Layers, Settings, Shield, Globe
 } from 'lucide-react';
 
 const coreModules = [
@@ -13,13 +13,26 @@ const coreModules = [
   { id: 'pager', title: 'On-Chain Pager', subtitle: 'ENCRYPTED MESSAGING', icon: MessageSquare }
 ];
 
-const EURC_CONTRACT_ADDRESS = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
-const FACTORY_CONTRACT_ADDRESS = "0x50Fc27E539EcfbdAC883Cd2b68a7EA2c992652c6";
+// Real-World Multi-Network Configuration
+const SUPPORTED_NETWORKS = {
+  '0x4cef52': { name: 'Arc Testnet', type: 'TESTNET', color: 'emerald', currency: 'USDC' },
+  '0x1': { name: 'Ethereum Mainnet', type: 'MAINNET', color: 'blue', currency: 'ETH' },
+  '0x89': { name: 'Polygon Mainnet', type: 'MAINNET', color: 'purple', currency: 'MATIC' },
+  '0xa4b1': { name: 'Arbitrum One', type: 'MAINNET', color: 'cyan', currency: 'ETH' },
+  '0x38': { name: 'BNB Smart Chain', type: 'MAINNET', color: 'amber', currency: 'BNB' }
+};
+
+const CONTRACTS = {
+  '0x4cef52': {
+    eurc: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
+    factory: "0x50Fc27E539EcfbdAC883Cd2b68a7EA2c992652c6"
+  }
+};
+
 const FACTORY_ABI = [
   "function createToken(string memory _name, string memory _symbol, uint256 _supply) external returns (address)",
   "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 supply)"
 ];
-const arcChainIdHex = '0x4cef52';
 
 export default function App() {
   const [isDark, setIsDark] = useState(true);
@@ -28,6 +41,7 @@ export default function App() {
   
   const [walletAddress, setWalletAddress] = useState(null);
   const [activeProvider, setActiveProvider] = useState(null);
+  const [currentChainId, setCurrentChainId] = useState(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   
@@ -45,13 +59,13 @@ export default function App() {
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   
   const [payrollText, setPayrollText] = useState('');
-  const [payrollToken, setPayrollToken] = useState('USDC');
+  const [payrollToken, setPayrollToken] = useState('NATIVE');
   const [globalAmount, setGlobalAmount] = useState('1.0');
   const [isPayrollProcessing, setIsPayrollProcessing] = useState(false);
 
   const [autoAddress, setAutoAddress] = useState('');
   const [autoAmount, setAutoAmount] = useState('');
-  const [autoToken, setAutoToken] = useState('USDC');
+  const [autoToken, setAutoToken] = useState('NATIVE');
   const [autoTime, setAutoTime] = useState('1'); 
   const [activeTasks, setActiveTasks] = useState([]);
 
@@ -84,8 +98,7 @@ export default function App() {
 
   useEffect(() => {
     if (walletAddress && txHistory.length > 0) { 
-      // History limit added: keep only last 50 transactions so it never crashes the browser
-      const cappedHistory = txHistory.slice(0, 50);
+      const cappedHistory = txHistory.slice(0, 50); // Prevent browser memory overload
       localStorage.setItem(`arcTx_${walletAddress}`, JSON.stringify(cappedHistory)); 
     }
   }, [txHistory, walletAddress]);
@@ -119,95 +132,63 @@ export default function App() {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs(prev => [...prev, { time, msg, type }]);
   };
-
-  // SECURE TRANSFER HELPER (With Real-World Validations)
-  const sendToken = async (token, to, amount) => {
-    if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
-    
-    // Security check: Reject 0, negative or invalid amounts
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
-
-    // Security check: Reject if insufficient balance
-    if (token === 'USDC' && numAmount > parseFloat(balance)) throw new Error(`Insufficient balance! You have ${balance} USDC.`);
-    if (token === 'EURC' && numAmount > parseFloat(eurcBalance)) throw new Error(`Insufficient balance! You have ${eurcBalance} EURC.`);
-
-    if (token === 'USDC') {
-      const val = BigInt(Math.floor(numAmount * 1e18)).toString(16);
-      const tx = await activeProvider.request({
-        method: 'eth_sendTransaction',
-        params: [{ from: walletAddress, to, value: '0x' + val }]
-      });
-      return tx;
-    } else {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(
-        EURC_CONTRACT_ADDRESS,
-        ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"],
-        signer
-      );
-      const decimals = await contract.decimals();
-      const tx = await contract.transfer(to, window.ethers.parseUnits(amount, decimals));
-      return tx.hash;
-    }
-  };
-    const fetchNetworkData = async (provider) => {
+    const fetchNetworkData = async (provider, address) => {
     try {
       const blockHex = await provider.request({ method: 'eth_blockNumber' });
       const gasHex = await provider.request({ method: 'eth_gasPrice' });
+      const chainIdHex = await provider.request({ method: 'eth_chainId' });
+      
       setBlockNumber(parseInt(blockHex, 16).toString());
       setGasPrice((parseInt(gasHex, 16) / 1e9).toFixed(4) + ' Gwei');
+      setCurrentChainId(chainIdHex.toLowerCase());
+      
+      if (address) {
+        const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
+        setBalance((parseInt(balHex, 16) / 1e18).toFixed(4));
+        
+        // Only fetch EURC if on Arc Testnet
+        if (chainIdHex.toLowerCase() === '0x4cef52' && window.ethers) {
+          try {
+            const ethersProvider = new window.ethers.BrowserProvider(provider);
+            const eurcContract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], ethersProvider);
+            const eurcBal = await eurcContract.balanceOf(address);
+            const decimals = await eurcContract.decimals();
+            setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
+          } catch (err) { setEurcBalance('0.00'); }
+        } else {
+          setEurcBalance('0.00'); // Disable EURC balance on mainnets
+        }
+      }
     } catch (e) {}
   };
 
   useEffect(() => {
     let interval;
-    if (activeProvider) {
-      fetchNetworkData(activeProvider);
-      interval = setInterval(() => fetchNetworkData(activeProvider), 4000);
+    if (activeProvider && walletAddress) {
+      fetchNetworkData(activeProvider, walletAddress);
+      interval = setInterval(() => fetchNetworkData(activeProvider, walletAddress), 5000);
     }
     return () => clearInterval(interval);
-  }, [activeProvider]);
+  }, [activeProvider, walletAddress]);
 
   useEffect(() => {
     if (!activeProvider) return;
     const handleAccountsChanged = (accounts) => {
-      if (!accounts || accounts.length === 0) {
-        disconnectWallet();
-      } else {
-        setWalletAddress(accounts[0]);
-        updateBalances(activeProvider, accounts[0]);
-        addLog(`Account switched: ${accounts[0]}`, 'warning');
-      }
+      if (!accounts || accounts.length === 0) disconnectWallet();
+      else { setWalletAddress(accounts[0]); fetchNetworkData(activeProvider, accounts[0]); addLog(`Account switched: ${accounts[0]}`, 'warning'); }
     };
-    const handleChainChanged = () => { window.location.reload(); };
+    const handleChainChanged = (chainId) => {
+      setCurrentChainId(chainId.toLowerCase());
+      addLog(`Network switched automatically by wallet.`, 'info');
+      fetchNetworkData(activeProvider, walletAddress);
+    };
     activeProvider.on && activeProvider.on('accountsChanged', handleAccountsChanged);
     activeProvider.on && activeProvider.on('chainChanged', handleChainChanged);
     return () => {
       activeProvider.removeListener && activeProvider.removeListener('accountsChanged', handleAccountsChanged);
       activeProvider.removeListener && activeProvider.removeListener('chainChanged', handleChainChanged);
     };
-  }, [activeProvider]);
-
-  const updateBalances = async (provider, address) => {
-    if (!provider || !address) return;
-    try {
-      addLog(`Fetching omni-balances for ${address.substring(0,6)}...`, 'process');
-      const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
-      setBalance((parseInt(balHex, 16) / 1e18).toFixed(4));
-            try {
-        if (window.ethers) {
-          const ethersProvider = new window.ethers.BrowserProvider(provider);
-          const eurcContract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], ethersProvider);
-          const eurcBal = await eurcContract.balanceOf(address);
-          const decimals = await eurcContract.decimals();
-          setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
-        }
-      } catch (err) { setEurcBalance('0.00'); }
-      addLog(`Balances synced successfully.`, 'success');
-    } catch (e) { addLog(`Balance sync delayed.`, 'warning'); }
-  };
+  }, [activeProvider, walletAddress]);
 
   const executeConnection = async (targetProvider) => {
     try {
@@ -215,22 +196,26 @@ export default function App() {
       try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } catch (e) {}
       const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
-      const currentChain = await targetProvider.request({ method: 'eth_chainId' });
       
-      if (currentChain.toLowerCase() !== arcChainIdHex.toLowerCase()) {
-        addLog('Switching to Arc Testnet...', 'process');
-        try { await targetProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: arcChainIdHex }] }); }
-        catch (e) {
-          if (e.code === 4902 || e.code === -32603) {
-            await targetProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: arcChainIdHex, chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
-          } else throw new Error("Cancelled");
-        }
-      }
-      setActiveProvider(targetProvider); setWalletAddress(address);
-      await updateBalances(targetProvider, address);
+      setActiveProvider(targetProvider); 
+      setWalletAddress(address);
+      await fetchNetworkData(targetProvider, address);
+      
       addLog(`Wallet Connected: ${address}`, 'success');
       setIsConnecting(false); confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
     } catch (error) { setIsConnecting(false); addLog(`Connection failed.`, 'error'); }
+  };
+
+  const switchNetwork = async (chainId) => {
+    if (!activeProvider) return alert("Connect wallet first!");
+    addLog(`Requesting network switch in wallet...`, 'process');
+    try {
+      await activeProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] });
+    } catch (e) {
+      if (e.code === 4902 && chainId === '0x4cef52') {
+        await activeProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4cef52', chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
+      } else { addLog(`Network switch cancelled by user.`, 'error'); }
+    }
   };
 
   const handleProviderSelect = (type) => {
@@ -241,20 +226,50 @@ export default function App() {
   };
 
   const disconnectWallet = () => {
-    setWalletAddress(null); setActiveProvider(null); setBalance('0.00'); setEurcBalance('0.00');
+    setWalletAddress(null); setActiveProvider(null); setCurrentChainId(null); setBalance('0.00'); setEurcBalance('0.00');
     setBlockNumber('SYNCING...'); setGasPrice('SYNCING...'); setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
+  };
+    // SECURE MULTI-CHAIN TRANSFER HELPER
+  const sendToken = async (token, to, amount) => {
+    if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
+    
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
+
+    if (token === 'NATIVE') {
+      if (numAmount > parseFloat(balance)) throw new Error(`Insufficient balance! You have ${balance}.`);
+      const val = BigInt(Math.floor(numAmount * 1e18)).toString(16);
+      const tx = await activeProvider.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: walletAddress, to, value: '0x' + val }]
+      });
+      return tx;
+    } else if (token === 'EURC') {
+      if (currentChainId !== '0x4cef52') throw new Error("EURC is only supported on Arc Testnet.");
+      if (numAmount > parseFloat(eurcBalance)) throw new Error(`Insufficient EURC balance!`);
+      const provider = new window.ethers.BrowserProvider(activeProvider);
+      const signer = await provider.getSigner();
+      const contract = new window.ethers.Contract(
+        CONTRACTS['0x4cef52'].eurc,
+        ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"],
+        signer
+      );
+      const decimals = await contract.decimals();
+      const tx = await contract.transfer(to, window.ethers.parseUnits(amount, decimals));
+      return tx.hash;
+    }
   };
     const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider || !walletAddress) return alert("Please connect wallet first!");
     addLog(`[AI INPUT] ${aiCommand}`, 'info'); setIsAiProcessing(true);
-    const regex = /send\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
+    const regex = /send\s+([\d.]+)\s*(native|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
     let match, intents = [];
     while ((match = regex.exec(aiCommand)) !== null) { 
-      intents.push({ amount: match[1], token: (match[2] || 'USDC').toUpperCase(), to: match[3] }); 
+      intents.push({ amount: match[1], token: (match[2] || 'NATIVE').toUpperCase(), to: match[3] }); 
     }
     if (intents.length === 0) { 
-      addLog(`AI didn't understand format. Try: "Send 1 USDC to 0x..."`, 'warning'); 
+      addLog(`AI didn't understand. Try: "Send 1 NATIVE to 0x..."`, 'warning'); 
       setIsAiProcessing(false); return; 
     }
 
@@ -267,7 +282,7 @@ export default function App() {
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: intent.token, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
       } catch(e) { addLog(`[Task ${i+1}/${intents.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
     }
-    confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
+    confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     setAiCommand(''); setIsAiProcessing(false);
   };
 
@@ -295,7 +310,7 @@ export default function App() {
         setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: task.amount, token: payrollToken, to: task.to, time: new Date().toLocaleTimeString() }, ...prev]);
       } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
     }
-    confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
+    confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     setPayrollText(''); setIsPayrollProcessing(false);
   };
     const executeScheduledTask = async (task) => {
@@ -305,7 +320,7 @@ export default function App() {
       addLog(`[AGENT] Scheduled Execution Success! TX: ${txHash}`, 'success');
       setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: task.amount, token: task.token, to: task.address, time: new Date().toLocaleTimeString() }, ...prev]);
       setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Completed' } : t));
-      confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
+      confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     } catch (e) {
       addLog(`[AGENT] Task failed: ${e.message || 'rejected'}`, 'error');
       setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Failed' } : t));
@@ -315,8 +330,6 @@ export default function App() {
   const handleScheduleTask = () => {
     if (!activeProvider || !autoAddress || !autoAmount || !autoTime) return alert("Fill all fields!");
     if (!window.ethers || !window.ethers.isAddress(autoAddress)) return alert("Invalid address!");
-    
-    // Security check: validate schedule amount
     if (parseFloat(autoAmount) <= 0) return alert("Amount must be greater than 0");
 
     const delayMs = parseFloat(autoTime) * 60000;
@@ -347,15 +360,14 @@ export default function App() {
   };
     const handleDeployToken = async () => {
     if (!activeProvider || !forgeName || !forgeSymbol || !forgeSupply) return alert("Fill token details!");
-    
-    // Security check: Prevent zero or negative token supply
+    if (currentChainId !== '0x4cef52') return alert("Smart Contract Forging is currently only supported on Arc Testnet!");
     if (parseFloat(forgeSupply) <= 0) return alert("Supply must be greater than 0!");
 
     setIsForging(true); addLog(`[FORGE] Deploying ${forgeName} (${forgeSymbol}) via factory...`, 'process');
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const signer = await provider.getSigner();
-      const factory = new window.ethers.Contract(FACTORY_CONTRACT_ADDRESS, FACTORY_ABI, signer);
+      const factory = new window.ethers.Contract(CONTRACTS['0x4cef52'].factory, FACTORY_ABI, signer);
       const tx = await factory.createToken(forgeName, forgeSymbol, forgeSupply);
       addLog(`[FORGE] Transaction sent, waiting for confirmation...`, 'process');
       const receipt = await tx.wait();
@@ -374,12 +386,12 @@ export default function App() {
 
   const checkAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return alert("Enter spender address!");
+    if (currentChainId !== '0x4cef52') return alert("Revoke feature is optimized for Arc Testnet currently.");
     setIsChecking(true); setCurrentAllowance(null);
     addLog(`Scanning allowance for spender: ${spenderAddress.substring(0,8)}...`, 'process');
     try {
-      if (!window.ethers.isAddress(spenderAddress)) throw new Error("Invalid address");
       const provider = new window.ethers.BrowserProvider(activeProvider);
-      const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function allowance(address, address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
+      const contract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function allowance(address, address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
       const allow = await contract.allowance(walletAddress, spenderAddress);
       const formatted = window.ethers.formatUnits(allow, await contract.decimals());
       setCurrentAllowance(formatted.toString());
@@ -394,7 +406,7 @@ export default function App() {
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
       const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(EURC_CONTRACT_ADDRESS, ["function approve(address, uint256) returns (bool)"], signer);
+      const contract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function approve(address, uint256) returns (bool)"], signer);
       const tx = await contract.approve(spenderAddress, 0);
       await tx.wait(); setCurrentAllowance('0.0');
       addLog(`REVOKE SUCCESSFUL. Allowance set to 0.`, 'success'); confetti();
@@ -406,11 +418,8 @@ export default function App() {
   const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
   
-  const numUsdc = parseFloat(balance) || 0;
-  const numEurc = parseFloat(eurcBalance) || 0;
-  const total = numUsdc + numEurc;
-  const usdcPct = total > 0 ? (numUsdc / total) * 100 : 50;
-  const eurcPct = total > 0 ? (numEurc / total) * 100 : 50;
+  const activeNetInfo = SUPPORTED_NETWORKS[currentChainId] || { name: 'Unknown Network', type: 'CUSTOM', color: 'slate', currency: 'NATIVE' };
+  const nativeSymbol = activeNetInfo.currency;
 
   return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
@@ -434,14 +443,21 @@ export default function App() {
         </div>
       )}
 
-      {/* HEADER WITH NETWORK TELEMETRY FOLDED */}
+      {/* HEADER WITH NETWORK SELECTOR */}
       <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Cpu className="w-6 h-6 text-cyan-500" />
               <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
-              <span className="hidden sm:inline-block text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2.5 py-0.5 rounded-full font-mono font-bold shadow-[0_0_10px_rgba(34,211,238,0.2)]">Built on Arc</span>
+              
+              {/* Dynamic Network Badge */}
+              <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] bg-${activeNetInfo.color}-500/10 text-${activeNetInfo.color}-500 border border-${activeNetInfo.color}-500/30 px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center`}>
+                <option value="0x4cef52">⚪ ARC TESTNET</option>
+                <option value="0x1">🔵 ETH MAINNET</option>
+                <option value="0x89">🟣 POLYGON MAINNET</option>
+                <option value="0xa4b1">🩵 ARBITRUM MAINNET</option>
+              </select>
             </div>
             <button onClick={() => setIsDark(!isDark)} className={`p-2 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-amber-400' : 'bg-slate-200 border-slate-300 text-indigo-600'}`}>
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -449,9 +465,9 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 text-[10px] font-mono bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-md text-emerald-500 font-bold">
-              <Activity className="w-3 h-3 animate-pulse" />
-              <span>ARC TESTNET | BLK: {blockNumber} | GAS: {gasPrice}</span>
+            <div className={`hidden md:flex items-center gap-2 text-[10px] font-mono bg-${activeNetInfo.color}-500/10 border border-${activeNetInfo.color}-500/20 px-3 py-1.5 rounded-md text-${activeNetInfo.color}-500 font-bold uppercase`}>
+              <Globe className="w-3 h-3 animate-pulse" />
+              <span>{activeNetInfo.name} | BLK: {blockNumber}</span>
             </div>
             {walletAddress ? (
               <button onClick={disconnectWallet} className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border flex items-center gap-2 ${isDark ? 'bg-slate-900 border-cyan-500/30 text-cyan-400' : 'bg-white border-cyan-500 text-cyan-600'}`}>
@@ -465,44 +481,40 @@ export default function App() {
           </div>
         </div>
       </header>
-            <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         
-        {/* ASSET TELEMETRY (WITH TEST FAUCET BUTTON) */}
+        {/* ASSET TELEMETRY */}
         <section className={`border rounded-2xl p-6 flex flex-col md:flex-row gap-8 justify-between items-center relative overflow-hidden transition-colors ${bgCard}`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-3 relative z-10 flex-1">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-cyan-500 font-mono"><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
+            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono text-${activeNetInfo.color}-500`}><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
             <div className="flex items-center gap-4">
               <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
-              <button onClick={() => updateBalances(activeProvider, walletAddress)} className="p-2 border border-slate-500/30 rounded-lg hover:bg-slate-800 text-slate-400" title="Refresh Balance">
+              <button onClick={() => fetchNetworkData(activeProvider, walletAddress)} className="p-2 border border-slate-500/30 rounded-lg hover:bg-slate-800 text-slate-400">
                 <Activity className="w-4 h-4" />
               </button>
-              <button onClick={() => window.open('https://faucet.circle.com/', '_blank')} className="px-3 py-1.5 bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/20 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-400 hover:text-white transition-all flex items-center gap-1.5 shadow-sm">
-                <Droplet className="w-3.5 h-3.5" /> TEST FAUCET
-              </button>
+              {currentChainId === '0x4cef52' && (
+                <button onClick={() => window.open('https://faucet.circle.com/', '_blank')} className="px-3 py-1.5 bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/20 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-400 hover:text-white transition-all flex items-center gap-1.5 shadow-sm">
+                  <Droplet className="w-3.5 h-3.5" /> TEST FAUCET
+                </button>
+              )}
             </div>
             <p className={`text-xs ${textMuted}`}>Visual representation of your omnichain assets routed through Nexoria.</p>
           </div>
           <div className="flex-1 w-full relative z-10 max-w-sm">
             <div className={`p-4 rounded-xl border space-y-3 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center font-mono font-bold text-xs">
-                <span className="text-cyan-500">USDC: {balance}</span>
-                <span className="text-fuchsia-500">EURC: {eurcBalance}</span>
-              </div>
-              <div className="h-2 w-full rounded-full overflow-hidden flex bg-slate-800">
-                <div style={{ width: `${usdcPct}%` }} className="h-full bg-cyan-500 transition-all duration-500"></div>
-                <div style={{ width: `${eurcPct}%` }} className="h-full bg-fuchsia-500 transition-all duration-500"></div>
-              </div>
-              <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                <span>{usdcPct.toFixed(1)}% Native</span>
-                <span>{eurcPct.toFixed(1)}% Euro</span>
+                <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
+                {currentChainId === '0x4cef52' && <span className="text-fuchsia-500">EURC: {eurcBalance}</span>}
               </div>
             </div>
           </div>
         </section>
-                      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
           
-          {/* SIDEBAR: 4 CORE AI MODULES + 1 SYSTEM UTILITIES FOLDER */}
+          {/* SIDEBAR */}
           <div className="md:col-span-4 space-y-6">
             <div className="space-y-2">
               <div className={`text-[10px] uppercase tracking-[0.2em] font-mono mb-3 ${textMuted}`}>COMMAND MODULES</div>
@@ -528,7 +540,8 @@ export default function App() {
               </button>
             </div>
           </div>
-                    {/* RIGHT MAIN CONTENT AREA */}
+
+          {/* MAIN CONTENT AREA */}
           <div className="md:col-span-8 space-y-6 flex flex-col">
             
             <section className={`border rounded-2xl p-6 transition-colors flex-grow ${bgCard}`}>
@@ -540,12 +553,11 @@ export default function App() {
                   <p className={`text-sm ${textMuted}`}>Command the AI to execute transactions across different assets simultaneously.</p>
                   <div className={`p-4 rounded-xl border flex flex-col gap-3 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
                     <div className="flex gap-2">
-                      <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder='Try: "Send 1 USDC to 0x..."' className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
+                      <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder={`Try: "Send 1 ${nativeSymbol} to 0x..."`} className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
                       <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white font-bold rounded-lg disabled:opacity-50"><ArrowRight className="w-4 h-4" /></button>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-1">
-                      <button onClick={() => setAiCommand('Send 1 USDC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400' : 'bg-slate-200 border-slate-300 text-cyan-700'}`}>💡 Fast Send</button>
-                      <button onClick={() => setAiCommand('Send 1 USDC to  and Send 2 EURC to ')} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-fuchsia-400' : 'bg-slate-200 border-slate-300 text-fuchsia-700'}`}>⚡ Batch Transfer</button>
+                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to `)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400' : 'bg-slate-200 border-slate-300 text-cyan-700'}`}>💡 Fast Send</button>
                     </div>
                   </div>
                 </div>
@@ -555,14 +567,13 @@ export default function App() {
               {activeModule === 'payroll' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Users className="text-indigo-500"/> Token Airdrop & Payroll</h3>
-                  <p className={`text-sm ${textMuted}`}>Distribute tokens to multiple addresses at once. Paste list below.</p>
                   <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
                     <div className="flex gap-4">
                       <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>GLOBAL AMOUNT</label><input type="number" step="0.01" value={globalAmount} onChange={e=>setGlobalAmount(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono focus:outline-none ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
                       <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SELECT TOKEN</label>
                         <div className="flex gap-2">
-                          <button onClick={() => setPayrollToken('USDC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'USDC' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>USDC</button>
-                          <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>EURC</button>
+                          <button onClick={() => setPayrollToken('NATIVE')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'NATIVE' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>{nativeSymbol}</button>
+                          {currentChainId === '0x4cef52' && <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>EURC</button>}
                         </div>
                       </div>
                     </div>
@@ -576,11 +587,10 @@ export default function App() {
               {activeModule === 'automation' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Clock className="text-orange-500"/> Agentic Automation</h3>
-                  <p className={`text-sm ${textMuted}`}>Set a timer. AI Agent will trigger transaction automatically on wallet.</p>
                   <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
                     <div className="grid grid-cols-2 gap-4">
                       <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>AMOUNT</label><input type="number" value={autoAmount} onChange={e=>setAutoAmount(e.target.value)} placeholder="1.0" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                      <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TOKEN</label><select value={autoToken} onChange={e=>setAutoToken(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}><option>USDC</option><option>EURC</option></select></div>
+                      <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TOKEN</label><select value={autoToken} onChange={e=>setAutoToken(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}><option value="NATIVE">{nativeSymbol}</option>{currentChainId === '0x4cef52' && <option value="EURC">EURC</option>}</select></div>
                     </div>
                     <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TARGET ADDRESS</label><input type="text" value={autoAddress} onChange={e=>setAutoAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
                     <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>DELAY (MINUTES)</label><input type="number" value={autoTime} onChange={e=>setAutoTime(e.target.value)} placeholder="1" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
@@ -596,11 +606,11 @@ export default function App() {
                   )}
                 </div>
               )}
-                            {/* 4. ON-CHAIN PAGER */}
+
+              /* 4. ON-CHAIN PAGER */}
               {activeModule === 'pager' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><MessageSquare className="text-fuchsia-500"/> On-Chain Pager</h3>
-                  <p className={`text-sm ${textMuted}`}>Send immutable text messages directly into Arc blockchain via Hex Data.</p>
                   <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
                     <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>RECIPIENT ADDRESS</label><input type="text" value={pagerAddress} onChange={e=>setPagerAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
                     <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SECURE MESSAGE</label><textarea value={pagerMessage} onChange={e=>setPagerMessage(e.target.value)} placeholder="Type secret message..." rows="3" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
@@ -609,14 +619,14 @@ export default function App() {
                 </div>
               )}
 
-              {/* FOLDED UTILITIES: LEDGER, SECURITY, FORGE */}
+              {/* FOLDED UTILITIES */}
               {activeModule === 'utilities' && (
                 <div className="space-y-6 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Settings className="text-purple-500"/> System Utilities</h3>
                   <div className={`flex gap-2 p-1 rounded-lg border ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-100 border-slate-300'}`}>
                     <button onClick={()=>setActiveUtilityTab('ledger')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='ledger'?'bg-purple-500 text-white':'text-slate-500'}`}><History className="w-4 h-4 inline mr-1"/> Ledger</button>
-                    <button onClick={()=>setActiveUtilityTab('security')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='security'?'bg-purple-500 text-white':'text-slate-500'}`}><Shield className="w-4 h-4 inline mr-1"/> Revoke</button>
-                    <button onClick={()=>setActiveUtilityTab('forge')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='forge'?'bg-purple-500 text-white':'text-slate-500'}`}><Layers className="w-4 h-4 inline mr-1"/> Forge</button>
+                    {currentChainId === '0x4cef52' && <button onClick={()=>setActiveUtilityTab('security')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='security'?'bg-purple-500 text-white':'text-slate-500'}`}><Shield className="w-4 h-4 inline mr-1"/> Revoke</button>}
+                    {currentChainId === '0x4cef52' && <button onClick={()=>setActiveUtilityTab('forge')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='forge'?'bg-purple-500 text-white':'text-slate-500'}`}><Layers className="w-4 h-4 inline mr-1"/> Forge</button>}
                   </div>
                   
                   <div className={`p-4 rounded-xl border ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
@@ -627,14 +637,14 @@ export default function App() {
                           {txHistory.map(tx => (
                             <div key={tx.id} className="p-3 border border-emerald-500/20 bg-emerald-500/5 rounded-lg flex justify-between items-center text-xs font-mono">
                               <div><div className="font-bold text-white">Sent {tx.amount} {tx.token}</div><div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div></div>
-                              <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">View ↗</a>
+                              <span className="text-emerald-400">Success ✓</span>
                             </div>
                           ))}
                         </div>
                       ) : <div className="text-xs text-slate-500 text-center py-4">No recent transaction receipts.</div>
                     )}
                     
-                    {activeUtilityTab === 'security' && (
+                    {activeUtilityTab === 'security' && currentChainId === '0x4cef52' && (
                       <div className="space-y-4">
                         <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SPENDER ADDRESS TO SCAN</label><input type="text" value={spenderAddress} onChange={e=>setSpenderAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
                         <div className="flex gap-2">
@@ -647,7 +657,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeUtilityTab === 'forge' && (
+                    {activeUtilityTab === 'forge' && currentChainId === '0x4cef52' && (
                       <div className="space-y-4">
                         <div className="flex gap-2">
                           <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>NAME</label><input type="text" value={forgeName} onChange={e=>setForgeName(e.target.value)} placeholder="e.g. Nexoria Coin" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
