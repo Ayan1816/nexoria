@@ -20,6 +20,7 @@ const FACTORY_ABI = [
   "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 supply)"
 ];
 const arcChainIdHex = '0x4cef52';
+
 export default function App() {
   const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(coreModules[0].id);
@@ -83,11 +84,12 @@ export default function App() {
 
   useEffect(() => {
     if (walletAddress && txHistory.length > 0) { 
-      localStorage.setItem(`arcTx_${walletAddress}`, JSON.stringify(txHistory)); 
+      // History limit added: keep only last 50 transactions so it never crashes the browser
+      const cappedHistory = txHistory.slice(0, 50);
+      localStorage.setItem(`arcTx_${walletAddress}`, JSON.stringify(cappedHistory)); 
     }
   }, [txHistory, walletAddress]);
 
-  // Restore & reschedule any pending automation tasks after page reload
   useEffect(() => {
     if (!walletAddress) return;
     const saved = localStorage.getItem(`arcTasks_${walletAddress}`);
@@ -102,7 +104,7 @@ export default function App() {
       setActiveTasks(tasks);
     } catch (e) {}
   }, [walletAddress]);
-    // Persist automation tasks so they survive a page refresh
+
   useEffect(() => {
     if (walletAddress && activeTasks.length > 0) {
       localStorage.setItem(`arcTasks_${walletAddress}`, JSON.stringify(activeTasks));
@@ -118,11 +120,20 @@ export default function App() {
     setTerminalLogs(prev => [...prev, { time, msg, type }]);
   };
 
-  // SHARED TRANSFER HELPER — used by AI batch, payroll, automation
+  // SECURE TRANSFER HELPER (With Real-World Validations)
   const sendToken = async (token, to, amount) => {
     if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
+    
+    // Security check: Reject 0, negative or invalid amounts
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
+
+    // Security check: Reject if insufficient balance
+    if (token === 'USDC' && numAmount > parseFloat(balance)) throw new Error(`Insufficient balance! You have ${balance} USDC.`);
+    if (token === 'EURC' && numAmount > parseFloat(eurcBalance)) throw new Error(`Insufficient balance! You have ${eurcBalance} EURC.`);
+
     if (token === 'USDC') {
-      const val = BigInt(Math.floor(parseFloat(amount) * 1e18)).toString(16);
+      const val = BigInt(Math.floor(numAmount * 1e18)).toString(16);
       const tx = await activeProvider.request({
         method: 'eth_sendTransaction',
         params: [{ from: walletAddress, to, value: '0x' + val }]
@@ -141,8 +152,7 @@ export default function App() {
       return tx.hash;
     }
   };
-
-  const fetchNetworkData = async (provider) => {
+    const fetchNetworkData = async (provider) => {
     try {
       const blockHex = await provider.request({ method: 'eth_blockNumber' });
       const gasHex = await provider.request({ method: 'eth_gasPrice' });
@@ -160,7 +170,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [activeProvider]);
 
-  // ACCOUNT / NETWORK CHANGE LISTENER
   useEffect(() => {
     if (!activeProvider) return;
     const handleAccountsChanged = (accounts) => {
@@ -236,8 +245,7 @@ export default function App() {
     setBlockNumber('SYNCING...'); setGasPrice('SYNCING...'); setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
-    // REAL AI BATCH EXECUTION
-  const handleAiCommand = async () => {
+    const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider || !walletAddress) return alert("Please connect wallet first!");
     addLog(`[AI INPUT] ${aiCommand}`, 'info'); setIsAiProcessing(true);
     const regex = /send\s+([\d.]+)\s*(usdc|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
@@ -263,7 +271,6 @@ export default function App() {
     setAiCommand(''); setIsAiProcessing(false);
   };
 
-  // REAL PAYROLL AIRDROP
   const handlePayrollCommand = async () => {
     if (!payrollText || !activeProvider || !walletAddress) return alert("Please connect wallet!");
     setIsPayrollProcessing(true); addLog(`[PAYROLL] Analyzing recipients...`, 'info');
@@ -291,8 +298,7 @@ export default function App() {
     confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
     setPayrollText(''); setIsPayrollProcessing(false);
   };
-    // REAL AUTOMATION TRIGGER (persists across page refresh)
-  const executeScheduledTask = async (task) => {
+    const executeScheduledTask = async (task) => {
     addLog(`[AGENT] Executing scheduled transfer...`, 'process');
     try {
       const txHash = await sendToken(task.token, task.address, task.amount);
@@ -301,7 +307,7 @@ export default function App() {
       setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Completed' } : t));
       confetti(); setTimeout(() => updateBalances(activeProvider, walletAddress), 3000);
     } catch (e) {
-      addLog(`[AGENT] Task failed or rejected.`, 'error');
+      addLog(`[AGENT] Task failed: ${e.message || 'rejected'}`, 'error');
       setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Failed' } : t));
     }
   };
@@ -309,6 +315,10 @@ export default function App() {
   const handleScheduleTask = () => {
     if (!activeProvider || !autoAddress || !autoAmount || !autoTime) return alert("Fill all fields!");
     if (!window.ethers || !window.ethers.isAddress(autoAddress)) return alert("Invalid address!");
+    
+    // Security check: validate schedule amount
+    if (parseFloat(autoAmount) <= 0) return alert("Amount must be greater than 0");
+
     const delayMs = parseFloat(autoTime) * 60000;
     const taskId = Date.now();
     const newTask = { id: taskId, address: autoAddress, amount: autoAmount, token: autoToken, time: autoTime, status: 'Pending', triggerAt: taskId + delayMs };
@@ -318,7 +328,6 @@ export default function App() {
     setAutoAddress(''); setAutoAmount('');
   };
 
-  // REAL ON-CHAIN PAGER
   const handleSendPager = async () => {
     if (!activeProvider || !pagerAddress || !pagerMessage) return alert("Enter address & message!");
     if (!window.ethers || !window.ethers.isAddress(pagerAddress)) return alert("Invalid recipient address!");
@@ -336,10 +345,12 @@ export default function App() {
     } catch (e) { addLog(`[PAGER] Transmission rejected/failed.`, 'error'); }
     setIsPagerSending(false);
   };
-
-  // REAL TOKEN FORGE — deploys an actual ERC20 via the on-chain factory contract
-  const handleDeployToken = async () => {
+    const handleDeployToken = async () => {
     if (!activeProvider || !forgeName || !forgeSymbol || !forgeSupply) return alert("Fill token details!");
+    
+    // Security check: Prevent zero or negative token supply
+    if (parseFloat(forgeSupply) <= 0) return alert("Supply must be greater than 0!");
+
     setIsForging(true); addLog(`[FORGE] Deploying ${forgeName} (${forgeSymbol}) via factory...`, 'process');
     try {
       const provider = new window.ethers.BrowserProvider(activeProvider);
@@ -361,7 +372,6 @@ export default function App() {
     setIsForging(false);
   };
 
-  // REAL TOKEN SECURITY SCAN & REVOKE
   const checkAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return alert("Enter spender address!");
     setIsChecking(true); setCurrentAllowance(null);
@@ -377,7 +387,8 @@ export default function App() {
     } catch (e) { addLog(`Scan failed. Check contract address.`, 'error'); } 
     setIsChecking(false);
   };
-    const revokeAllowance = async () => {
+
+  const revokeAllowance = async () => {
     if (!walletAddress || !window.ethers || !spenderAddress) return;
     setIsChecking(true);
     try {
