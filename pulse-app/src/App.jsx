@@ -423,6 +423,7 @@ export default function App() {
 
   return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
+      
       {/* Wallet Selection Modal */}
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -451,8 +452,8 @@ export default function App() {
               <Cpu className="w-6 h-6 text-cyan-500" />
               <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
               
-              {/* Dynamic Network Badge */}
-              <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] bg-${activeNetInfo.color}-500/10 text-${activeNetInfo.color}-500 border border-${activeNetInfo.color}-500/30 px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center`}>
+              {/* Dynamic Network Dropdown */}
+              <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
                 <option value="0x4cef52">⚪ ARC TESTNET</option>
                 <option value="0x1">🔵 ETH MAINNET</option>
                 <option value="0x89">🟣 POLYGON MAINNET</option>
@@ -465,7 +466,7 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className={`hidden md:flex items-center gap-2 text-[10px] font-mono bg-${activeNetInfo.color}-500/10 border border-${activeNetInfo.color}-500/20 px-3 py-1.5 rounded-md text-${activeNetInfo.color}-500 font-bold uppercase`}>
+            <div className={`hidden md:flex items-center gap-2 text-[10px] font-mono px-3 py-1.5 rounded-md font-bold uppercase ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
               <Globe className="w-3 h-3 animate-pulse" />
               <span>{activeNetInfo.name} | BLK: {blockNumber}</span>
             </div>
@@ -481,14 +482,13 @@ export default function App() {
           </div>
         </div>
       </header>
-
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+            <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         
         {/* ASSET TELEMETRY */}
         <section className={`border rounded-2xl p-6 flex flex-col md:flex-row gap-8 justify-between items-center relative overflow-hidden transition-colors ${bgCard}`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-3 relative z-10 flex-1">
-            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono text-${activeNetInfo.color}-500`}><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
+            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono text-cyan-500`}><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
             <div className="flex items-center gap-4">
               <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
               <button onClick={() => fetchNetworkData(activeProvider, walletAddress)} className="p-2 border border-slate-500/30 rounded-lg hover:bg-slate-800 text-slate-400">
@@ -607,7 +607,7 @@ export default function App() {
                 </div>
               )}
 
-              /* 4. ON-CHAIN PAGER */}
+              {/* 4. ON-CHAIN PAGER */}
               {activeModule === 'pager' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><MessageSquare className="text-fuchsia-500"/> On-Chain Pager</h3>
