@@ -13,7 +13,6 @@ const coreModules = [
   { id: 'pager', title: 'On-Chain Pager', subtitle: 'ENCRYPTED MESSAGING', icon: MessageSquare }
 ];
 
-// Real-World Multi-Network Configuration
 const SUPPORTED_NETWORKS = {
   '0x4cef52': { name: 'Arc Testnet', type: 'TESTNET', color: 'emerald', currency: 'USDC' },
   '0x1': { name: 'Ethereum Mainnet', type: 'MAINNET', color: 'blue', currency: 'ETH' },
@@ -35,7 +34,7 @@ const FACTORY_ABI = [
 ];
 
 export default function App() {
-  const [isDark, setIsDark] = useState(true);
+    const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(coreModules[0].id);
   const [activeUtilityTab, setActiveUtilityTab] = useState('ledger');
   
@@ -54,7 +53,6 @@ export default function App() {
   const [txHistory, setTxHistory] = useState([]);
   const terminalEndRef = useRef(null);
 
-  // Feature States
   const [aiCommand, setAiCommand] = useState('');
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   
@@ -81,7 +79,28 @@ export default function App() {
   const [spenderAddress, setSpenderAddress] = useState('');
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
-    useEffect(() => {
+    // ==========================================
+  // DATABASE MANAGER (Cloud Ready Architecture)
+  // ==========================================
+  const loadData = async (key) => {
+    if (!walletAddress) return null;
+    try {
+      // Prepared for Firebase/Supabase Fetch API
+      const saved = localStorage.getItem(`nexoria_${key}_${walletAddress}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
+  };
+
+  const saveData = async (key, data) => {
+    if (!walletAddress) return;
+    try { 
+      // Prepared for Firebase/Supabase POST API
+      localStorage.setItem(`nexoria_${key}_${walletAddress}`, JSON.stringify(data)); 
+    } 
+    catch (e) {}
+  };
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && !window.ethers) {
       const script = document.createElement('script');
       script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js";
@@ -90,38 +109,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (walletAddress) {
-      const saved = localStorage.getItem(`arcTx_${walletAddress}`);
-      if (saved) { try { setTxHistory(JSON.parse(saved)); } catch (e) { setTxHistory([]); } }
-    }
+    const initData = async () => {
+      const history = await loadData('txHistory');
+      if (history) setTxHistory(history);
+      
+      const tasks = await loadData('tasks');
+      if (tasks) {
+        tasks.filter(t => t.status === 'Pending').forEach(task => {
+          const remaining = task.triggerAt - Date.now();
+          if (remaining <= 0) executeScheduledTask(task);
+          else setTimeout(() => executeScheduledTask(task), remaining);
+        });
+        setActiveTasks(tasks);
+      }
+    };
+    initData();
   }, [walletAddress]);
 
   useEffect(() => {
-    if (walletAddress && txHistory.length > 0) { 
-      const cappedHistory = txHistory.slice(0, 50); // Prevent browser memory overload
-      localStorage.setItem(`arcTx_${walletAddress}`, JSON.stringify(cappedHistory)); 
-    }
+    if (walletAddress && txHistory.length > 0) saveData('txHistory', txHistory.slice(0, 50));
   }, [txHistory, walletAddress]);
 
   useEffect(() => {
-    if (!walletAddress) return;
-    const saved = localStorage.getItem(`arcTasks_${walletAddress}`);
-    if (!saved) return;
-    try {
-      const tasks = JSON.parse(saved);
-      tasks.filter(t => t.status === 'Pending').forEach(task => {
-        const remaining = task.triggerAt - Date.now();
-        if (remaining <= 0) executeScheduledTask(task);
-        else setTimeout(() => executeScheduledTask(task), remaining);
-      });
-      setActiveTasks(tasks);
-    } catch (e) {}
-  }, [walletAddress]);
-
-  useEffect(() => {
-    if (walletAddress && activeTasks.length > 0) {
-      localStorage.setItem(`arcTasks_${walletAddress}`, JSON.stringify(activeTasks));
-    }
+    if (walletAddress && activeTasks.length > 0) saveData('tasks', activeTasks);
   }, [activeTasks, walletAddress]);
 
   useEffect(() => { 
@@ -146,7 +156,6 @@ export default function App() {
         const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
         setBalance((parseInt(balHex, 16) / 1e18).toFixed(4));
         
-        // Only fetch EURC if on Arc Testnet
         if (chainIdHex.toLowerCase() === '0x4cef52' && window.ethers) {
           try {
             const ethersProvider = new window.ethers.BrowserProvider(provider);
@@ -155,9 +164,7 @@ export default function App() {
             const decimals = await eurcContract.decimals();
             setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
           } catch (err) { setEurcBalance('0.00'); }
-        } else {
-          setEurcBalance('0.00'); // Disable EURC balance on mainnets
-        }
+        } else { setEurcBalance('0.00'); }
       }
     } catch (e) {}
   };
@@ -189,8 +196,7 @@ export default function App() {
       activeProvider.removeListener && activeProvider.removeListener('chainChanged', handleChainChanged);
     };
   }, [activeProvider, walletAddress]);
-
-  const executeConnection = async (targetProvider) => {
+    const executeConnection = async (targetProvider) => {
     try {
       setIsConnecting(true); setShowWalletModal(false); 
       try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } catch (e) {}
@@ -260,7 +266,8 @@ export default function App() {
       return tx.hash;
     }
   };
-    const handleAiCommand = async () => {
+
+  const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider || !walletAddress) return alert("Please connect wallet first!");
     addLog(`[AI INPUT] ${aiCommand}`, 'info'); setIsAiProcessing(true);
     const regex = /send\s+([\d.]+)\s*(native|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
@@ -285,8 +292,7 @@ export default function App() {
     confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     setAiCommand(''); setIsAiProcessing(false);
   };
-
-  const handlePayrollCommand = async () => {
+    const handlePayrollCommand = async () => {
     if (!payrollText || !activeProvider || !walletAddress) return alert("Please connect wallet!");
     setIsPayrollProcessing(true); addLog(`[PAYROLL] Analyzing recipients...`, 'info');
     const lines = payrollText.split('\n'); let tasks = [];
@@ -313,7 +319,8 @@ export default function App() {
     confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     setPayrollText(''); setIsPayrollProcessing(false);
   };
-    const executeScheduledTask = async (task) => {
+
+  const executeScheduledTask = async (task) => {
     addLog(`[AGENT] Executing scheduled transfer...`, 'process');
     try {
       const txHash = await sendToken(task.token, task.address, task.amount);
@@ -340,8 +347,7 @@ export default function App() {
     setTimeout(() => executeScheduledTask(newTask), delayMs);
     setAutoAddress(''); setAutoAmount('');
   };
-
-  const handleSendPager = async () => {
+    const handleSendPager = async () => {
     if (!activeProvider || !pagerAddress || !pagerMessage) return alert("Enter address & message!");
     if (!window.ethers || !window.ethers.isAddress(pagerAddress)) return alert("Invalid recipient address!");
     setIsPagerSending(true); addLog(`[PAGER] Encoding message to Hex data...`, 'process');
@@ -358,7 +364,8 @@ export default function App() {
     } catch (e) { addLog(`[PAGER] Transmission rejected/failed.`, 'error'); }
     setIsPagerSending(false);
   };
-    const handleDeployToken = async () => {
+
+  const handleDeployToken = async () => {
     if (!activeProvider || !forgeName || !forgeSymbol || !forgeSupply) return alert("Fill token details!");
     if (currentChainId !== '0x4cef52') return alert("Smart Contract Forging is currently only supported on Arc Testnet!");
     if (parseFloat(forgeSupply) <= 0) return alert("Supply must be greater than 0!");
@@ -423,8 +430,6 @@ export default function App() {
 
   return (
     <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
-      
-      {/* Wallet Selection Modal */}
       {showWalletModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
@@ -444,7 +449,6 @@ export default function App() {
         </div>
       )}
 
-      {/* HEADER WITH NETWORK SELECTOR */}
       <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -452,7 +456,6 @@ export default function App() {
               <Cpu className="w-6 h-6 text-cyan-500" />
               <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
               
-              {/* Dynamic Network Dropdown */}
               <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
                 <option value="0x4cef52">⚪ ARC TESTNET</option>
                 <option value="0x1">🔵 ETH MAINNET</option>
@@ -482,9 +485,8 @@ export default function App() {
           </div>
         </div>
       </header>
-            <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-        
-        {/* ASSET TELEMETRY */}
+
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         <section className={`border rounded-2xl p-6 flex flex-col md:flex-row gap-8 justify-between items-center relative overflow-hidden transition-colors ${bgCard}`}>
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
           <div className="space-y-3 relative z-10 flex-1">
@@ -513,8 +515,6 @@ export default function App() {
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-          
-          {/* SIDEBAR */}
           <div className="md:col-span-4 space-y-6">
             <div className="space-y-2">
               <div className={`text-[10px] uppercase tracking-[0.2em] font-mono mb-3 ${textMuted}`}>COMMAND MODULES</div>
@@ -541,12 +541,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* MAIN CONTENT AREA */}
           <div className="md:col-span-8 space-y-6 flex flex-col">
-            
             <section className={`border rounded-2xl p-6 transition-colors flex-grow ${bgCard}`}>
               
-              {/* 1. AI BATCH DELEGATE */}
               {activeModule === 'ai_batch' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Bot className="text-cyan-500"/> AI Batch Delegate</h3>
@@ -563,7 +560,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* 2. TOKEN AIRDROP & PAYROLL */}
               {activeModule === 'payroll' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Users className="text-indigo-500"/> Token Airdrop & Payroll</h3>
@@ -583,7 +579,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* 3. AGENTIC AUTOMATION */}
               {activeModule === 'automation' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Clock className="text-orange-500"/> Agentic Automation</h3>
@@ -607,7 +602,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* 4. ON-CHAIN PAGER */}
               {activeModule === 'pager' && (
                 <div className="space-y-4 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><MessageSquare className="text-fuchsia-500"/> On-Chain Pager</h3>
@@ -619,7 +613,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* FOLDED UTILITIES */}
               {activeModule === 'utilities' && (
                 <div className="space-y-6 animate-fade-in">
                   <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Settings className="text-purple-500"/> System Utilities</h3>
@@ -633,7 +626,7 @@ export default function App() {
                     {activeUtilityTab === 'ledger' && (
                       txHistory.length > 0 ? (
                         <div className="space-y-2">
-                          <div className="flex justify-end"><button onClick={() => { setTxHistory([]); localStorage.removeItem(`arcTx_${walletAddress}`); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
+                          <div className="flex justify-end"><button onClick={() => { setTxHistory([]); localStorage.removeItem(`nexoria_txHistory_${walletAddress}`); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
                           {txHistory.map(tx => (
                             <div key={tx.id} className="p-3 border border-emerald-500/20 bg-emerald-500/5 rounded-lg flex justify-between items-center text-xs font-mono">
                               <div><div className="font-bold text-white">Sent {tx.amount} {tx.token}</div><div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div></div>
@@ -672,7 +665,6 @@ export default function App() {
               )}
             </section>
 
-            {/* SYSTEM TERMINAL */}
             <section className={`border rounded-2xl overflow-hidden shadow-lg ${isDark ? 'bg-black border-cyan-500/30' : 'bg-slate-900 border-slate-800'}`}>
               <div className="bg-slate-900 p-2 flex items-center gap-2 border-b border-white/10">
                 <Terminal className="w-4 h-4 text-slate-400" />
