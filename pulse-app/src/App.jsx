@@ -479,6 +479,40 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Cpu className="w-6 h-6 text-cyan-500" />
+  const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
+  const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
+  const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
+  const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
+  
+  const activeNetInfo = SUPPORTED_NETWORKS[currentChainId] || { name: 'Unknown Network', type: 'CUSTOM', color: 'slate', currency: 'NATIVE' };
+  const nativeSymbol = activeNetInfo.currency;
+
+  return (
+    <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+            <div className="flex justify-between items-center text-white font-bold">
+              <span>Select Web3 Wallet</span>
+              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div className="space-y-3 pt-2">
+              <button onClick={() => handleProviderSelect('rabby')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex justify-between text-cyan-400 font-bold">
+                <span>Rabby Wallet</span> <span className="text-xs bg-cyan-500/10 px-2 py-1 rounded">INSTANT</span>
+              </button>
+              <button onClick={() => handleProviderSelect('metamask')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex justify-between text-amber-400 font-bold">
+                <span>MetaMask</span> <span className="text-xs bg-amber-500/10 px-2 py-1 rounded">POPULAR</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-6 h-6 text-cyan-500" />
               <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
               
               <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
@@ -529,25 +563,39 @@ export default function App() {
             </div>
             <p className={`text-xs ${textMuted}`}>Visual representation of your omnichain assets routed through Nexoria.</p>
           </div>
+          
           <div className="flex-1 w-full relative z-10 max-w-sm">
-            <div className={`p-4 rounded-xl border space-y-3 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+            <div className={`p-4 rounded-xl border space-y-2 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center font-mono font-bold text-xs">
-                 <div className="flex flex-col gap-1">
-                    <span className={`text-[9px] uppercase tracking-wider ${textMuted}`}>Primary Asset</span>
-                    <span className="text-cyan-400 text-sm">{balance} {nativeSymbol} <span className="text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded ml-1">100%</span></span>
-                 </div>
-                 {currentChainId === '0x4cef52' && (
-                    <div className="flex flex-col gap-1 text-right">
-                       <span className={`text-[9px] uppercase tracking-wider ${textMuted}`}>Stablecoin</span>
-                       <span className="text-fuchsia-400 text-sm">{eurcBalance} EURC</span>
+                <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
+                {currentChainId === '0x4cef52' && <span className="text-fuchsia-500">EURC: {eurcBalance}</span>}
+              </div>
+              
+              {(() => {
+                const bal = parseFloat(balance) || 0;
+                const eurc = currentChainId === '0x4cef52' ? (parseFloat(eurcBalance) || 0) : 0;
+                const total = bal + eurc;
+                const nativePct = total > 0 ? ((bal / total) * 100).toFixed(1) : 100.0;
+                const eurcPct = total > 0 ? ((eurc / total) * 100).toFixed(1) : 0.0;
+                
+                return (
+                  <>
+                    <div className="w-full bg-slate-900 rounded-full h-1.5 mt-2 overflow-hidden flex border border-white/10">
+                      <div className="bg-cyan-500 h-full transition-all duration-500" style={{ width: `${nativePct}%` }}></div>
+                      {currentChainId === '0x4cef52' && (
+                        <div className="bg-fuchsia-500 h-full transition-all duration-500" style={{ width: `${eurcPct}%` }}></div>
+                      )}
                     </div>
-                 )}
-              </div>
-              <div className="w-full bg-slate-900 rounded-full h-1 mt-2 overflow-hidden border border-white/5">
-                <div className="bg-gradient-to-r from-cyan-500 to-fuchsia-500 h-full rounded-full w-full"></div>
-              </div>
+                    <div className="flex justify-between items-center font-mono text-[9px] text-slate-500 uppercase tracking-widest mt-1">
+                      <span>{nativePct}% {nativeSymbol}</span>
+                      {currentChainId === '0x4cef52' && <span>{eurcPct}% EURC</span>}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
+
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -576,6 +624,32 @@ export default function App() {
               </button>
             </div>
           </div>
+              <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
+              
+              <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
+                <option value="0x4cef52">⚪ ARC TESTNET</option>
+                <option value="0x1">🔵 ETH MAINNET</option>
+                <option value="0x89">🟣 POLYGON MAINNET</option>
+                <option value="0xa4b1">🩵 ARBITRUM MAINNET</option>
+              </select>
+            </div>
+            <button onClick={() => setIsDark(!isDark)} className={`p-2 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-amber-400' : 'bg-slate-200 border-slate-300 text-indigo-600'}`}>
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div className={`hidden md:flex items-center gap-2 text-[10px] font-mono px-3 py-1.5 rounded-md font-bold uppercase ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
+              <Globe className="w-3 h-3 animate-pulse" />
+              <span>{activeNetInfo.name} | BLK: {blockNumber}</span>
+            </div>
+            {walletAddress ? (
+              <button onClick={disconnectWallet} className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border flex items-center gap-2 ${isDark ? 'bg-slate-900 border-cyan-500/30 text-cyan-400' : 'bg-white border-cyan-500 text-cyan-600'}`}>
+                {walletAddress.substring(0,6)}...{walletAddress.substring(walletAddress.length-4)} <LogOut className="w-4 h-4" />
+              </button>
+            ) : (
+              <button onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
+
                     <div className="md:col-span-8 space-y-6 flex flex-col">
             <section className={`border rounded-2xl p-6 transition-colors flex-grow ${bgCard}`}>
               
