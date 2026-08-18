@@ -22,8 +22,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-// ===================================
-
 const coreModules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', icon: Bot },
   { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', icon: Users },
@@ -97,9 +95,6 @@ export default function App() {
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
 
-  // ==========================================
-  // CLOUD DATABASE MANAGER (Firebase Firestore)
-  // ==========================================
   const loadData = async (key) => {
     if (!walletAddress) return null;
     try {
@@ -109,10 +104,7 @@ export default function App() {
         return docSnap.data()[key] || null;
       }
       return null;
-    } catch (e) { 
-      console.error("Cloud DB Load Error:", e); 
-      return null; 
-    }
+    } catch (e) { return null; }
   };
 
   const saveData = async (key, data) => {
@@ -120,12 +112,9 @@ export default function App() {
     try {
       const docRef = doc(db, "nexoria_users", walletAddress);
       await setDoc(docRef, { [key]: data }, { merge: true }); 
-    } catch (e) { 
-      console.error("Cloud DB Save Error:", e); 
-    }
+    } catch (e) {}
   };
-
-  useEffect(() => {
+    useEffect(() => {
     if (typeof window !== 'undefined' && !window.ethers) {
       const script = document.createElement('script');
       script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js";
@@ -136,7 +125,6 @@ export default function App() {
   useEffect(() => {
     const initData = async () => {
       if (!walletAddress) return;
-      
       const history = await loadData('txHistory');
       if (history) setTxHistory(history);
       
@@ -205,8 +193,7 @@ export default function App() {
     }
     return () => clearInterval(interval);
   }, [activeProvider, walletAddress]);
-
-  useEffect(() => {
+    useEffect(() => {
     if (!activeProvider) return;
     const handleAccountsChanged = (accounts) => {
       if (!accounts || accounts.length === 0) disconnectWallet();
@@ -265,10 +252,9 @@ export default function App() {
     setBlockNumber('SYNCING...'); setGasPrice('SYNCING...'); setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
-  // SECURE MULTI-CHAIN TRANSFER HELPER
+
   const sendToken = async (token, to, amount) => {
     if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
-    
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
 
@@ -295,27 +281,35 @@ export default function App() {
       return tx.hash;
     }
   };
-
-  const handleAiCommand = async () => {
+    const handleAiCommand = async () => {
     if (!aiCommand || !activeProvider || !walletAddress) return alert("Please connect wallet first!");
     addLog(`[AI INPUT] ${aiCommand}`, 'info'); setIsAiProcessing(true);
-    const regex = /send\s+([\d.]+)\s*(native|eurc)?\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
+    const regex = /send\s+([\d.]+)\s*([a-zA-Z]+)?\s*(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
     let match, intents = [];
     while ((match = regex.exec(aiCommand)) !== null) { 
-      intents.push({ amount: match[1], token: (match[2] || 'NATIVE').toUpperCase(), to: match[3] }); 
+      let tokenStr = (match[2] || 'NATIVE').toUpperCase();
+      if (tokenStr === nativeSymbol.toUpperCase() || tokenStr === 'NATIVE') {
+          tokenStr = 'NATIVE';
+      } else if (tokenStr === 'EURC') {
+          tokenStr = 'EURC';
+      } else {
+          tokenStr = 'NATIVE';
+      }
+      intents.push({ amount: match[1], token: tokenStr, to: match[3] }); 
     }
     if (intents.length === 0) { 
-      addLog(`AI didn't understand. Try: "Send 1 NATIVE to 0x..."`, 'warning'); 
+      addLog(`AI didn't understand. Try: "Send 1 ${nativeSymbol} to 0x..."`, 'warning'); 
       setIsAiProcessing(false); return; 
     }
 
     for (let i = 0; i < intents.length; i++) {
       const intent = intents[i];
-      addLog(`[Task ${i+1}/${intents.length}] Routing ${intent.amount} ${intent.token} to ${intent.to.substring(0,6)}...`, 'process');
+      const displayToken = intent.token === 'NATIVE' ? nativeSymbol : intent.token;
+      addLog(`[Task ${i+1}/${intents.length}] Routing ${intent.amount} ${displayToken} to ${intent.to.substring(0,6)}...`, 'process');
       try {
         const txHash = await sendToken(intent.token, intent.to, intent.amount);
         addLog(`[Task ${i+1}/${intents.length}] Success! TX: ${txHash}`, 'success');
-        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: intent.token, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
+        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: displayToken, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
       } catch(e) { addLog(`[Task ${i+1}/${intents.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
     }
     confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
@@ -538,8 +532,19 @@ export default function App() {
           <div className="flex-1 w-full relative z-10 max-w-sm">
             <div className={`p-4 rounded-xl border space-y-3 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center font-mono font-bold text-xs">
-                <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
-                {currentChainId === '0x4cef52' && <span className="text-fuchsia-500">EURC: {eurcBalance}</span>}
+                 <div className="flex flex-col gap-1">
+                    <span className={`text-[9px] uppercase tracking-wider ${textMuted}`}>Primary Asset</span>
+                    <span className="text-cyan-400 text-sm">{balance} {nativeSymbol} <span className="text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded ml-1">100%</span></span>
+                 </div>
+                 {currentChainId === '0x4cef52' && (
+                    <div className="flex flex-col gap-1 text-right">
+                       <span className={`text-[9px] uppercase tracking-wider ${textMuted}`}>Stablecoin</span>
+                       <span className="text-fuchsia-400 text-sm">{eurcBalance} EURC</span>
+                    </div>
+                 )}
+              </div>
+              <div className="w-full bg-slate-900 rounded-full h-1 mt-2 overflow-hidden border border-white/5">
+                <div className="bg-gradient-to-r from-cyan-500 to-fuchsia-500 h-full rounded-full w-full"></div>
               </div>
             </div>
           </div>
@@ -571,8 +576,7 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          <div className="md:col-span-8 space-y-6 flex flex-col">
+                    <div className="md:col-span-8 space-y-6 flex flex-col">
             <section className={`border rounded-2xl p-6 transition-colors flex-grow ${bgCard}`}>
               
               {activeModule === 'ai_batch' && (
@@ -585,7 +589,8 @@ export default function App() {
                       <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white font-bold rounded-lg disabled:opacity-50"><ArrowRight className="w-4 h-4" /></button>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-1">
-                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to `)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400' : 'bg-slate-200 border-slate-300 text-cyan-700'}`}>💡 Fast Send</button>
+                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to `)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-500/10' : 'bg-slate-200 border-slate-300 text-cyan-700'}`}>💡 Fast Send</button>
+                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to 0x..., Send 2 ${nativeSymbol} to 0x...`)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-purple-400 hover:bg-purple-500/10' : 'bg-slate-200 border-slate-300 text-purple-700'}`}>🚀 Multi-Wallet Batch</button>
                     </div>
                   </div>
                 </div>
