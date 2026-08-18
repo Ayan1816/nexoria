@@ -529,8 +529,7 @@ export default function App() {
             </div>
             <p className={`text-xs ${textMuted}`}>Visual representation of your omnichain assets routed through Nexoria.</p>
           </div>
-          
-          <div className="flex-1 w-full relative z-10 max-w-sm">
+                    <div className="flex-1 w-full relative z-10 max-w-sm">
             <div className={`p-4 rounded-xl border space-y-2 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center font-mono font-bold text-xs">
                 <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
@@ -546,7 +545,7 @@ export default function App() {
                 
                 return (
                   <>
-                    <div className="w-full bg-slate-900 rounded-full h-1.5 mt-2 overflow-hidden flex border border-white/10">
+                    <div className="w-full bg-slate-900 rounded-full h-2.5 mt-2 overflow-hidden flex border border-white/10">
                       <div className="bg-cyan-500 h-full transition-all duration-500" style={{ width: `${nativePct}%` }}></div>
                       {currentChainId === '0x4cef52' && (
                         <div className="bg-fuchsia-500 h-full transition-all duration-500" style={{ width: `${eurcPct}%` }}></div>
