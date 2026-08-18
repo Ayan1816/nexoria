@@ -6,6 +6,24 @@ import {
   MessageSquare, Layers, Settings, Shield, Globe
 } from 'lucide-react';
 
+// === FIREBASE CLOUD INTEGRATION ===
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAIYBSV2oIAamzrTKsh7V5_7ej9lwNgmxk",
+  authDomain: "nexoria-2cedd.firebaseapp.com",
+  projectId: "nexoria-2cedd",
+  storageBucket: "nexoria-2cedd.firebasestorage.app",
+  messagingSenderId: "372418147855",
+  appId: "1:372418147855:web:3db8fa345bb3bdf408157a",
+  measurementId: "G-JKH7P78N13"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+// ===================================
+
 const coreModules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', icon: Bot },
   { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', icon: Users },
@@ -32,9 +50,8 @@ const FACTORY_ABI = [
   "function createToken(string memory _name, string memory _symbol, uint256 _supply) external returns (address)",
   "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 supply)"
 ];
-
 export default function App() {
-    const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(coreModules[0].id);
   const [activeUtilityTab, setActiveUtilityTab] = useState('ledger');
   
@@ -79,25 +96,33 @@ export default function App() {
   const [spenderAddress, setSpenderAddress] = useState('');
   const [currentAllowance, setCurrentAllowance] = useState(null);
   const [isChecking, setIsChecking] = useState(false);
-    // ==========================================
-  // DATABASE MANAGER (Cloud Ready Architecture)
+
+  // ==========================================
+  // CLOUD DATABASE MANAGER (Firebase Firestore)
   // ==========================================
   const loadData = async (key) => {
     if (!walletAddress) return null;
     try {
-      // Prepared for Firebase/Supabase Fetch API
-      const saved = localStorage.getItem(`nexoria_${key}_${walletAddress}`);
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) { return null; }
+      const docRef = doc(db, "nexoria_users", walletAddress);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data()[key] || null;
+      }
+      return null;
+    } catch (e) { 
+      console.error("Cloud DB Load Error:", e); 
+      return null; 
+    }
   };
 
   const saveData = async (key, data) => {
     if (!walletAddress) return;
-    try { 
-      // Prepared for Firebase/Supabase POST API
-      localStorage.setItem(`nexoria_${key}_${walletAddress}`, JSON.stringify(data)); 
-    } 
-    catch (e) {}
+    try {
+      const docRef = doc(db, "nexoria_users", walletAddress);
+      await setDoc(docRef, { [key]: data }, { merge: true }); 
+    } catch (e) { 
+      console.error("Cloud DB Save Error:", e); 
+    }
   };
 
   useEffect(() => {
@@ -110,6 +135,8 @@ export default function App() {
 
   useEffect(() => {
     const initData = async () => {
+      if (!walletAddress) return;
+      
       const history = await loadData('txHistory');
       if (history) setTxHistory(history);
       
@@ -142,7 +169,8 @@ export default function App() {
     const time = new Date().toLocaleTimeString();
     setTerminalLogs(prev => [...prev, { time, msg, type }]);
   };
-    const fetchNetworkData = async (provider, address) => {
+
+  const fetchNetworkData = async (provider, address) => {
     try {
       const blockHex = await provider.request({ method: 'eth_blockNumber' });
       const gasHex = await provider.request({ method: 'eth_gasPrice' });
@@ -196,7 +224,8 @@ export default function App() {
       activeProvider.removeListener && activeProvider.removeListener('chainChanged', handleChainChanged);
     };
   }, [activeProvider, walletAddress]);
-    const executeConnection = async (targetProvider) => {
+
+  const executeConnection = async (targetProvider) => {
     try {
       setIsConnecting(true); setShowWalletModal(false); 
       try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } catch (e) {}
@@ -236,7 +265,7 @@ export default function App() {
     setBlockNumber('SYNCING...'); setGasPrice('SYNCING...'); setTerminalLogs([]); setTxHistory([]);
     addLog(`Wallet disconnected successfully.`, 'info');
   };
-    // SECURE MULTI-CHAIN TRANSFER HELPER
+  // SECURE MULTI-CHAIN TRANSFER HELPER
   const sendToken = async (token, to, amount) => {
     if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
     
@@ -292,7 +321,8 @@ export default function App() {
     confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
     setAiCommand(''); setIsAiProcessing(false);
   };
-    const handlePayrollCommand = async () => {
+
+  const handlePayrollCommand = async () => {
     if (!payrollText || !activeProvider || !walletAddress) return alert("Please connect wallet!");
     setIsPayrollProcessing(true); addLog(`[PAYROLL] Analyzing recipients...`, 'info');
     const lines = payrollText.split('\n'); let tasks = [];
@@ -347,7 +377,8 @@ export default function App() {
     setTimeout(() => executeScheduledTask(newTask), delayMs);
     setAutoAddress(''); setAutoAmount('');
   };
-    const handleSendPager = async () => {
+
+  const handleSendPager = async () => {
     if (!activeProvider || !pagerAddress || !pagerMessage) return alert("Enter address & message!");
     if (!window.ethers || !window.ethers.isAddress(pagerAddress)) return alert("Invalid recipient address!");
     setIsPagerSending(true); addLog(`[PAGER] Encoding message to Hex data...`, 'process');
@@ -626,7 +657,7 @@ export default function App() {
                     {activeUtilityTab === 'ledger' && (
                       txHistory.length > 0 ? (
                         <div className="space-y-2">
-                          <div className="flex justify-end"><button onClick={() => { setTxHistory([]); localStorage.removeItem(`nexoria_txHistory_${walletAddress}`); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
+                          <div className="flex justify-end"><button onClick={() => { setTxHistory([]); saveData('txHistory', []); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
                           {txHistory.map(tx => (
                             <div key={tx.id} className="p-3 border border-emerald-500/20 bg-emerald-500/5 rounded-lg flex justify-between items-center text-xs font-mono">
                               <div><div className="font-bold text-white">Sent {tx.amount} {tx.token}</div><div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div></div>
