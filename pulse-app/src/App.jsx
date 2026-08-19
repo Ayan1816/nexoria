@@ -9,6 +9,7 @@ import {
 // === FIREBASE CLOUD INTEGRATION ===
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAIYBSV2oIAamzrTKsh7V5_7ej9lwNgmxk",
@@ -22,6 +23,9 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+signInAnonymously(auth).catch((error) => console.error("Auth Error:", error.message));
 const coreModules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', icon: Bot },
   { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', icon: Users },
@@ -96,22 +100,25 @@ export default function App() {
   const [isChecking, setIsChecking] = useState(false);
 
   const loadData = async (key) => {
-    if (!walletAddress) return null;
+    if (!walletAddress || !auth.currentUser) return null;
     try {
-      const docRef = doc(db, "nexoria_users", walletAddress);
+      const docRef = doc(db, "nexoria_users", auth.currentUser.uid);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        return docSnap.data()[key] || null;
+        const data = docSnap.data();
+        if (data.walletAddress === walletAddress) {
+           return data[key] || null;
+        }
       }
       return null;
     } catch (e) { return null; }
   };
 
   const saveData = async (key, data) => {
-    if (!walletAddress) return;
+    if (!walletAddress || !auth.currentUser) return;
     try {
-      const docRef = doc(db, "nexoria_users", walletAddress);
-      await setDoc(docRef, { [key]: data }, { merge: true }); 
+      const docRef = doc(db, "nexoria_users", auth.currentUser.uid);
+      await setDoc(docRef, { [key]: data, walletAddress: walletAddress }, { merge: true }); 
     } catch (e) {}
   };
     useEffect(() => {
@@ -483,9 +490,9 @@ export default function App() {
               
               <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
                 <option value="0x4cef52">⚪ ARC TESTNET</option>
-                <option value="0x1">🔵 ETH MAINNET</option>
-                <option value="0x89">🟣 POLYGON MAINNET</option>
-                <option value="0xa4b1">🩵 ARBITRUM MAINNET</option>
+                <option value="0x1" disabled>🔵 ETH MAINNET (Coming Soon)</option>
+                <option value="0x89" disabled>🟣 POLYGON (Coming Soon)</option>
+                <option value="0xa4b1" disabled>🩵 ARBITRUM (Coming Soon)</option>
               </select>
             </div>
             <button onClick={() => setIsDark(!isDark)} className={`p-2 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-amber-400' : 'bg-slate-200 border-slate-300 text-indigo-600'}`}>
@@ -529,7 +536,7 @@ export default function App() {
             </div>
             <p className={`text-xs ${textMuted}`}>Visual representation of your omnichain assets routed through Nexoria.</p>
           </div>
-                    <div className="flex-1 w-full relative z-10 max-w-sm">
+          <div className="flex-1 w-full relative z-10 max-w-sm">
             <div className={`p-4 rounded-xl border space-y-2 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex justify-between items-center font-mono font-bold text-xs">
                 <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
@@ -560,7 +567,6 @@ export default function App() {
               })()}
             </div>
           </div>
-
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -678,8 +684,18 @@ export default function App() {
                           <div className="flex justify-end"><button onClick={() => { setTxHistory([]); saveData('txHistory', []); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
                           {txHistory.map(tx => (
                             <div key={tx.id} className="p-3 border border-emerald-500/20 bg-emerald-500/5 rounded-lg flex justify-between items-center text-xs font-mono">
-                              <div><div className="font-bold text-white">Sent {tx.amount} {tx.token}</div><div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div></div>
-                              <span className="text-emerald-400">Success ✓</span>
+                              <div>
+                                <div className="font-bold text-white">Sent {tx.amount} {tx.token}</div>
+                                <div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                <span className="text-emerald-400">Success ✓</span>
+                                {tx.hash && tx.hash !== 'null' && (
+                                  <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1">
+                                    View ↗
+                                  </a>
+                                )}
+                              </div>
                             </div>
                           ))}
                         </div>
