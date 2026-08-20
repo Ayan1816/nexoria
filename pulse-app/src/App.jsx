@@ -9,7 +9,7 @@ import {
 // === FIREBASE CLOUD INTEGRATION ===
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAIYBSV2oIAamzrTKsh7V5_7ej9lwNgmxk",
@@ -24,8 +24,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
-
-signInAnonymously(auth).catch((error) => console.error("Auth Error:", error.message));
 const coreModules = [
   { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', icon: Bot },
   { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', icon: Users },
@@ -34,11 +32,11 @@ const coreModules = [
 ];
 
 const SUPPORTED_NETWORKS = {
-  '0x4cef52': { name: 'Arc Testnet', type: 'TESTNET', color: 'emerald', currency: 'USDC' },
-  '0x1': { name: 'Ethereum Mainnet', type: 'MAINNET', color: 'blue', currency: 'ETH' },
-  '0x89': { name: 'Polygon Mainnet', type: 'MAINNET', color: 'purple', currency: 'MATIC' },
-  '0xa4b1': { name: 'Arbitrum One', type: 'MAINNET', color: 'cyan', currency: 'ETH' },
-  '0x38': { name: 'BNB Smart Chain', type: 'MAINNET', color: 'amber', currency: 'BNB' }
+  '0x4cef52': { name: 'Arc Testnet', type: 'TESTNET', color: 'emerald', currency: 'USDC', explorer: 'https://testnet.arcscan.app' },
+  '0x1': { name: 'Ethereum Mainnet', type: 'MAINNET', color: 'blue', currency: 'ETH', explorer: 'https://etherscan.io' },
+  '0x89': { name: 'Polygon Mainnet', type: 'MAINNET', color: 'purple', currency: 'MATIC', explorer: 'https://polygonscan.com' },
+  '0xa4b1': { name: 'Arbitrum One', type: 'MAINNET', color: 'cyan', currency: 'ETH', explorer: 'https://arbiscan.io' },
+  '0x38': { name: 'BNB Smart Chain', type: 'MAINNET', color: 'amber', currency: 'BNB', explorer: 'https://bscscan.com' }
 };
 
 const CONTRACTS = {
@@ -56,6 +54,8 @@ export default function App() {
   const [isDark, setIsDark] = useState(true);
   const [activeModule, setActiveModule] = useState(coreModules[0].id);
   const [activeUtilityTab, setActiveUtilityTab] = useState('ledger');
+  
+  const [isAuthReady, setIsAuthReady] = useState(false);
   
   const [walletAddress, setWalletAddress] = useState(null);
   const [activeProvider, setActiveProvider] = useState(null);
@@ -106,9 +106,7 @@ export default function App() {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.walletAddress === walletAddress) {
-           return data[key] || null;
-        }
+        return data[`${walletAddress}_${key}`] || null;
       }
       return null;
     } catch (e) { return null; }
@@ -118,7 +116,7 @@ export default function App() {
     if (!walletAddress || !auth.currentUser) return;
     try {
       const docRef = doc(db, "nexoria_users", auth.currentUser.uid);
-      await setDoc(docRef, { [key]: data, walletAddress: walletAddress }, { merge: true }); 
+      await setDoc(docRef, { [`${walletAddress}_${key}`]: data }, { merge: true }); 
     } catch (e) {}
   };
     useEffect(() => {
@@ -130,8 +128,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsAuthReady(true);
+      } else {
+        signInAnonymously(auth).catch((e) => console.error("Auth Error:", e.message));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const initData = async () => {
-      if (!walletAddress) return;
+      if (!walletAddress || !isAuthReady) return;
       const history = await loadData('txHistory');
       if (history) setTxHistory(history);
       
@@ -146,7 +155,7 @@ export default function App() {
       }
     };
     initData();
-  }, [walletAddress]);
+  }, [walletAddress, isAuthReady]);
 
   useEffect(() => {
     if (walletAddress && txHistory.length > 0) saveData('txHistory', txHistory.slice(0, 50));
@@ -266,8 +275,8 @@ export default function App() {
     if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
 
     if (token === 'NATIVE') {
-      if (numAmount > parseFloat(balance)) throw new Error(`Insufficient balance! You have ${balance}.`);
-      const val = BigInt(Math.floor(numAmount * 1e18)).toString(16);
+      if (numAmount >= parseFloat(balance)) throw new Error(`Insufficient funds for gas! Please send slightly less than ${balance}.`);
+      const val = window.ethers.parseEther(amount.toString()).toString(16);
       const tx = await activeProvider.request({
         method: 'eth_sendTransaction',
         params: [{ from: walletAddress, to, value: '0x' + val }]
@@ -457,7 +466,7 @@ export default function App() {
   const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
   const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
   
-  const activeNetInfo = SUPPORTED_NETWORKS[currentChainId] || { name: 'Unknown Network', type: 'CUSTOM', color: 'slate', currency: 'NATIVE' };
+  const activeNetInfo = SUPPORTED_NETWORKS[currentChainId] || { name: 'Unknown Network', type: 'CUSTOM', color: 'slate', currency: 'NATIVE', explorer: 'https://testnet.arcscan.app' };
   const nativeSymbol = activeNetInfo.currency;
 
   return (
@@ -691,7 +700,7 @@ export default function App() {
                               <div className="flex flex-col items-end gap-1">
                                 <span className="text-emerald-400">Success ✓</span>
                                 {tx.hash && tx.hash !== 'null' && (
-                                  <a href={`https://testnet.arcscan.app/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1">
+                                  <a href={`${activeNetInfo.explorer}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1">
                                     View ↗
                                   </a>
                                 )}
