@@ -1,0 +1,14 @@
+export const MAX_BATCH = 25
+export const MAX_MEMO_CHARS = 256
+export const MAX_MEMO_BYTES = 256
+export const MAX_DELAY_MINUTES = 7 * 24 * 60
+export const MAX_WHOLE_SUPPLY = 10n ** 15n
+export const HISTORY_LIMIT = 50
+export const TASK_LIMIT = 20
+export const USDC_ERC20_DECIMALS = 6
+export const USDC_NATIVE_DECIMALS = 18
+export const NATIVE_PER_ERC20_UNIT = 10n ** 12n
+export const MIN_MAX_FEE_PER_GAS = 20_000_000_000n
+export const MAX_MAX_FEE_PER_GAS = 20_000n * 1_000_000_000n
+export const BLOCK_GAS_LIMIT = 30_000_000n
+export const REFERENCE_ERC20_GAS = 65_000n

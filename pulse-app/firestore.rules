@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /nexoria_users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /nexoria_users/{userId}/wallets/{wallet} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.updatedAt is int
+        && request.resource.data.updatedAt > 0
+        && request.resource.data.txHistory is list
+        && request.resource.data.tasks is list
+        && request.resource.data.txHistory.size() <= 50
+        && request.resource.data.tasks.size() <= 20
+        && request.resource.data.keys().hasOnly(['updatedAt', 'txHistory', 'tasks']);
+      allow delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

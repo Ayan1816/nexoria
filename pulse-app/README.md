@@ -1,16 +1,19 @@
-# React + Vite
+# Nexoria app
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The Vite application lives in this directory. The full project guide is the repository [README](../README.md): networks, Send Guard, payroll CSV, ledger, contacts, allowances, storage, and deployment.
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm test
+npm run lint
+npm run dev
+npm run build
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Copy `.env.example` to `.env` only when you want optional Firebase sync. Without those values, receipts and scheduled tasks stay in localStorage and IndexedDB for the connected address. Do not commit `.env`. Deploy `firestore.rules` with the Firebase project if you enable sync.
 
-## React Compiler
+Token deployment uses `src/contracts/FixedSupplyToken.json`. Payments call Arc's USDC, EURC, Memo, and Multicall3From contracts. After a Solidity change, rebuild the artifact from this directory:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+node ../contracts/compile.mjs
+```

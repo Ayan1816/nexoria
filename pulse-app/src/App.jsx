@@ -1,766 +1,1727 @@
-import React, { useState, useEffect, useRef } from 'react';
-import confetti from 'canvas-confetti';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import confetti from 'canvas-confetti'
 import {
-  Bot, ShieldAlert, Activity, Terminal, Zap, LogOut, Sun, Moon, 
-  Cpu, ArrowRight, CheckCircle, History, Droplet, Users, Clock,
-  MessageSquare, Layers, Settings, Shield, Globe
-} from 'lucide-react';
+  Activity, ArrowRight, Clock, Contact, Cpu, Droplet, Globe, History, Layers,
+  LogOut, MessageSquare, Moon, Settings, Shield, Sun, Terminal, Users, Zap,
+} from 'lucide-react'
+import { assertTokenMetadata, formatToken, parseAmount, parseWholeSupply } from './lib/amounts.js'
+import { HISTORY_LIMIT, TASK_LIMIT, USDC_NATIVE_DECIMALS } from './lib/constants.js'
+import { AppError, toUserError } from './lib/errors.js'
+import { listActiveAllowances } from './lib/allowances.js'
+import { getArcNetwork, NETWORKS } from './lib/networks.js'
+import { switchOrAddChain } from './lib/walletChain.js'
+import { assertAddress, assertDelayMinutes, assertMemo, parsePayrollList } from './lib/parse.js'
+import {
+  deployFixedSupplyToken, readWalletSnapshot, revokeAllowance,
+  sendMemo, sendTransfers, tokenDeployReady,
+} from './lib/payments.js'
+import { capTasks, createId, normalizeTasks } from './lib/state.js'
+import { downloadCsv, receiptsToCsv } from './lib/ledgerCsv.js'
+import { PAYROLL_SAMPLE_CSV, payrollCsvToText } from './lib/payrollCsv.js'
+import {
+  filterContacts, loadContacts, removeContact, saveContacts, upsertContact,
+} from './lib/contacts.js'
+import { analyzeSendGuard, guardAllowsSend, guardAckKey } from './lib/sendGuard.js'
+import { appendWalletHistory, loadWalletState, persistWalletState, readSavedReceipts } from './lib/storage.js'
+import { useAnnouncedWallets } from './hooks/useAnnouncedWallets.js'
 
-// === FIREBASE CLOUD INTEGRATION ===
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+const CAN_DEPLOY_TOKEN = tokenDeployReady()
+const MODULES = [
+  { id: 'payments', title: 'Batch payments', subtitle: 'USDC AND EURC', icon: ArrowRight },
+  { id: 'payroll', title: 'Payroll', subtitle: 'ONE BATCH TRANSFER', icon: Users },
+  { id: 'schedule', title: 'Scheduled payments', subtitle: 'SIGN WHEN DUE', icon: Clock },
+  { id: 'memo', title: 'On-chain memo', subtitle: 'PUBLIC MESSAGE', icon: MessageSquare },
+]
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAIYBSV2oIAamzrTKsh7V5_7ej9lwNgmxk",
-  authDomain: "nexoria-2cedd.firebaseapp.com",
-  projectId: "nexoria-2cedd",
-  storageBucket: "nexoria-2cedd.firebasestorage.app",
-  messagingSenderId: "372418147855",
-  appId: "1:372418147855:web:3db8fa345bb3bdf408157a",
-  measurementId: "G-JKH7P78N13"
-};
+function clock() {
+  return new Date().toISOString().slice(11, 19)
+}
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-const coreModules = [
-  { id: 'ai_batch', title: 'AI Batch Delegate', subtitle: 'MULTI-TX AUTONOMY', icon: Bot },
-  { id: 'payroll', title: 'Token Airdrop & Payroll', subtitle: 'MASS DISPERSION', icon: Users },
-  { id: 'automation', title: 'Agentic Automation', subtitle: 'SMART TRIGGERS', icon: Clock },
-  { id: 'pager', title: 'On-Chain Pager', subtitle: 'ENCRYPTED MESSAGING', icon: MessageSquare }
-];
+function receiptStamp() {
+  return new Date().toISOString()
+}
 
-const SUPPORTED_NETWORKS = {
-  '0x4cef52': { name: 'Arc Testnet', type: 'TESTNET', color: 'emerald', currency: 'USDC', explorer: 'https://testnet.arcscan.app' },
-  '0x1': { name: 'Ethereum Mainnet', type: 'MAINNET', color: 'blue', currency: 'ETH', explorer: 'https://etherscan.io' },
-  '0x89': { name: 'Polygon Mainnet', type: 'MAINNET', color: 'purple', currency: 'MATIC', explorer: 'https://polygonscan.com' },
-  '0xa4b1': { name: 'Arbitrum One', type: 'MAINNET', color: 'cyan', currency: 'ETH', explorer: 'https://arbiscan.io' },
-  '0x38': { name: 'BNB Smart Chain', type: 'MAINNET', color: 'amber', currency: 'BNB', explorer: 'https://bscscan.com' }
-};
+function formatLedgerWhen(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return value ?? ''
+  const parsed = Date.parse(value)
+  if (!Number.isFinite(parsed)) return value
+  const date = new Date(parsed)
+  const pad = (part) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
 
-const CONTRACTS = {
-  '0x4cef52': {
-    eurc: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
-    factory: "0x50Fc27E539EcfbdAC883Cd2b68a7EA2c992652c6"
-  }
-};
+function shortAddress(value) {
+  if (typeof value !== 'string' || value.length < 12) return value || ''
+  return `${value.slice(0, 6)}…${value.slice(-4)}`
+}
 
-const FACTORY_ABI = [
-  "function createToken(string memory _name, string memory _symbol, uint256 _supply) external returns (address)",
-  "event TokenCreated(address indexed tokenAddress, address indexed creator, string name, string symbol, uint256 supply)"
-];
+function assetLabel(asset) {
+  return asset === 'eurc' ? 'EURC' : 'USDC'
+}
+
+function formatAllowance(value) {
+  if (typeof value !== 'bigint') return ''
+  if (value >= 2n ** 255n) return 'Unlimited'
+  return formatToken(value, 6, 6)
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-mono text-slate-500">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function ContactMenu({ contacts, query, open, onPick, isDark }) {
+  if (!open) return null
+  const matches = filterContacts(contacts, query, 100)
+  return (
+    <div className={`max-h-48 space-y-1 overflow-y-auto rounded-xl border p-2 ${isDark ? 'border-white/10 bg-slate-950' : 'border-slate-200 bg-white'}`}>
+      {matches.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-500">No matching contacts.</p>}
+      {matches.map((contact) => (
+        <button
+          key={contact.id}
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onPick(contact)}
+          className={`flex w-full flex-col rounded-lg border px-3 py-2 text-left ${isDark ? 'border-white/10 hover:border-cyan-500/40' : 'border-slate-200 hover:border-cyan-600/40'}`}
+        >
+          <span className="text-sm font-bold">{contact.name}</span>
+          <span className="break-all font-mono text-[10px] text-slate-500">{contact.address}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function App() {
-  const [isDark, setIsDark] = useState(true);
-  const [activeModule, setActiveModule] = useState(coreModules[0].id);
-  const [activeUtilityTab, setActiveUtilityTab] = useState('ledger');
-  
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [activeProvider, setActiveProvider] = useState(null);
-  const [currentChainId, setCurrentChainId] = useState(null);
-  const [showWalletModal, setShowWalletModal] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  
-  const [balance, setBalance] = useState('0.00');
-  const [eurcBalance, setEurcBalance] = useState('0.00');
-  const [blockNumber, setBlockNumber] = useState('SYNCING...');
-  const [gasPrice, setGasPrice] = useState('SYNCING...');
-  
-  const [terminalLogs, setTerminalLogs] = useState([]);
-  const [txHistory, setTxHistory] = useState([]);
-  const terminalEndRef = useRef(null);
+  const wallets = useAnnouncedWallets()
+  const [isDark, setIsDark] = useState(() => {
+    try { return localStorage.getItem('nexoria.theme') !== 'light' } catch { return true }
+  })
+  const [activeModule, setActiveModule] = useState(MODULES[0].id)
+  const [utilityTab, setUtilityTab] = useState('ledger')
+  const [showWalletModal, setShowWalletModal] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [eip1193, setEip1193] = useState(null)
+  const [walletAddress, setWalletAddress] = useState(null)
+  const [chainId, setChainId] = useState(null)
+  const [snapshot, setSnapshot] = useState(null)
+  const [balanceError, setBalanceError] = useState('')
+  const [readyAddress, setReadyAddress] = useState(null)
+  const [logs, setLogs] = useState([])
+  const [txHistory, setTxHistory] = useState([])
+  const [tasks, setTasks] = useState([])
+  const [formError, setFormError] = useState('')
+  const [payAddress, setPayAddress] = useState('')
+  const [payAmount, setPayAmount] = useState('')
+  const [isPaying, setIsPaying] = useState(false)
+  const [payrollText, setPayrollText] = useState('')
+  const [payrollCsvErrors, setPayrollCsvErrors] = useState([])
+  const [payrollCsvSummary, setPayrollCsvSummary] = useState('')
+  const [payrollAsset, setPayrollAsset] = useState('usdc')
+  const [globalAmount, setGlobalAmount] = useState('')
+  const [isPayroll, setIsPayroll] = useState(false)
+  const [autoAddress, setAutoAddress] = useState('')
+  const [autoAmount, setAutoAmount] = useState('')
+  const [autoAsset, setAutoAsset] = useState('usdc')
+  const [autoTime, setAutoTime] = useState('')
+  const [pagerAddress, setPagerAddress] = useState('')
+  const [pagerMessage, setPagerMessage] = useState('')
+  const [isPaging, setIsPaging] = useState(false)
+  const [forgeName, setForgeName] = useState('')
+  const [forgeSymbol, setForgeSymbol] = useState('')
+  const [forgeSupply, setForgeSupply] = useState('')
+  const [isForging, setIsForging] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [contactBook, setContactBook] = useState({ owner: '', contacts: [] })
+  const [contactName, setContactName] = useState('')
+  const [contactAddress, setContactAddress] = useState('')
+  const [editingContactId, setEditingContactId] = useState('')
+  const [isSavingContact, setIsSavingContact] = useState(false)
+  const [contactError, setContactError] = useState('')
+  const [payContactOpen, setPayContactOpen] = useState(false)
+  const [payFieldFocus, setPayFieldFocus] = useState(false)
+  const [payrollContactOpen, setPayrollContactOpen] = useState(false)
+  const [guardResult, setGuardResult] = useState({ key: '', report: null, error: '' })
+  const [guardAck, setGuardAck] = useState('')
+  const [guardNonce, setGuardNonce] = useState(0)
+  const [allowanceResult, setAllowanceResult] = useState({ key: '', rows: null, error: '' })
+  const [revokingKey, setRevokingKey] = useState('')
+  const [allowanceNonce, setAllowanceNonce] = useState(0)
 
-  const [aiCommand, setAiCommand] = useState('');
-  const [isAiProcessing, setIsAiProcessing] = useState(false);
-  
-  const [payrollText, setPayrollText] = useState('');
-  const [payrollToken, setPayrollToken] = useState('NATIVE');
-  const [globalAmount, setGlobalAmount] = useState('1.0');
-  const [isPayrollProcessing, setIsPayrollProcessing] = useState(false);
+  const terminalEndRef = useRef(null)
+  const addressRef = useRef(null)
+  const historyRef = useRef([])
+  const tasksRef = useRef([])
+  const dataReadyRef = useRef(false)
+  const remoteWritableRef = useRef(false)
+  const timersRef = useRef(new Map())
+  const inFlightRef = useRef(new Set())
+  const actionLockRef = useRef(false)
+  const saveQueueRef = useRef(Promise.resolve())
+  const refreshingRef = useRef(false)
+  const refreshAgainRef = useRef(false)
+  const providerRef = useRef(null)
+  const lastBalanceErrorRef = useRef('')
+  const guardGenRef = useRef(0)
+  const contactFormOwnerRef = useRef('')
+  const contactGenRef = useRef(0)
+  const payrollFileRef = useRef(null)
+  const MAX_TIMER_MS = 2_147_483_647
 
-  const [autoAddress, setAutoAddress] = useState('');
-  const [autoAmount, setAutoAmount] = useState('');
-  const [autoToken, setAutoToken] = useState('NATIVE');
-  const [autoTime, setAutoTime] = useState('1'); 
-  const [activeTasks, setActiveTasks] = useState([]);
+  const pushLog = useCallback((message, type = 'info') => {
+    setLogs((prev) => [...prev.slice(-199), { time: clock(), message, type }])
+  }, [])
 
-  const [pagerAddress, setPagerAddress] = useState('');
-  const [pagerMessage, setPagerMessage] = useState('');
-  const [isPagerSending, setIsPagerSending] = useState(false);
-
-  const [forgeName, setForgeName] = useState('');
-  const [forgeSymbol, setForgeSymbol] = useState('');
-  const [forgeSupply, setForgeSupply] = useState('1000000');
-  const [isForging, setIsForging] = useState(false);
-
-  const [spenderAddress, setSpenderAddress] = useState('');
-  const [currentAllowance, setCurrentAllowance] = useState(null);
-  const [isChecking, setIsChecking] = useState(false);
-
-  const loadData = async (key) => {
-    if (!walletAddress || !auth.currentUser) return null;
-    try {
-      const docRef = doc(db, "nexoria_users", auth.currentUser.uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        return data[`${walletAddress}_${key}`] || null;
-      }
-      return null;
-    } catch (e) { return null; }
-  };
-
-  const saveData = async (key, data) => {
-    if (!walletAddress || !auth.currentUser) return;
-    try {
-      const docRef = doc(db, "nexoria_users", auth.currentUser.uid);
-      await setDoc(docRef, { [`${walletAddress}_${key}`]: data }, { merge: true }); 
-    } catch (e) {}
-  };
-    useEffect(() => {
-    if (typeof window !== 'undefined' && !window.ethers) {
-      const script = document.createElement('script');
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js";
-      document.body.appendChild(script);
+  const saveCurrent = useCallback(() => {
+    const address = addressRef.current
+    if (!address || !dataReadyRef.current) return
+    const payload = {
+      updatedAt: Date.now(),
+      txHistory: historyRef.current.slice(),
+      tasks: tasksRef.current.slice(),
     }
-  }, []);
+    const writable = remoteWritableRef.current
+    saveQueueRef.current = saveQueueRef.current
+      .then(() => persistWalletState(address, payload, writable))
+      .then((result) => {
+        if (result.localError) pushLog(result.localError.message, 'error')
+        if (result.remoteError) pushLog(result.remoteError.message, 'warning')
+      })
+      .catch((error) => pushLog(toUserError(error).message, 'error'))
+  }, [pushLog])
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setIsAuthReady(true);
-      } else {
-        signInAnonymously(auth).catch((e) => console.error("Auth Error:", e.message));
+  const commitHistory = useCallback((rows, address = addressRef.current) => {
+    if (addressRef.current !== address || !dataReadyRef.current) return
+    historyRef.current = rows.slice(0, HISTORY_LIMIT)
+    setTxHistory(historyRef.current)
+    saveCurrent()
+  }, [saveCurrent])
+
+  const commitTasks = useCallback((rows, address = addressRef.current) => {
+    if (addressRef.current !== address || !dataReadyRef.current) return
+    tasksRef.current = capTasks(rows)
+    setTasks(tasksRef.current)
+    saveCurrent()
+  }, [saveCurrent])
+
+  const markReady = useCallback((id) => {
+    let changed = false
+    const next = tasksRef.current.map((task) => {
+      if (task.id === id && task.status === 'pending') {
+        changed = true
+        return { ...task, status: 'ready' }
       }
-    });
-    return () => unsubscribe();
-  }, []);
+      return task
+    })
+    if (changed) commitTasks(next)
+  }, [commitTasks])
 
-  useEffect(() => {
-    const initData = async () => {
-      if (!walletAddress || !isAuthReady) return;
-      const history = await loadData('txHistory');
-      if (history) setTxHistory(history);
-      
-      const tasks = await loadData('tasks');
-      if (tasks) {
-        tasks.filter(t => t.status === 'Pending').forEach(task => {
-          const remaining = task.triggerAt - Date.now();
-          if (remaining <= 0) executeScheduledTask(task);
-          else setTimeout(() => executeScheduledTask(task), remaining);
-        });
-        setActiveTasks(tasks);
-      }
-    };
-    initData();
-  }, [walletAddress, isAuthReady]);
-
-  useEffect(() => {
-    if (walletAddress && txHistory.length > 0) saveData('txHistory', txHistory.slice(0, 50));
-  }, [txHistory, walletAddress]);
-
-  useEffect(() => {
-    if (walletAddress && activeTasks.length > 0) saveData('tasks', activeTasks);
-  }, [activeTasks, walletAddress]);
-
-  useEffect(() => { 
-    if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" }); 
-  }, [terminalLogs]);
-
-  const addLog = (msg, type = 'info') => {
-    const time = new Date().toLocaleTimeString();
-    setTerminalLogs(prev => [...prev, { time, msg, type }]);
-  };
-
-  const fetchNetworkData = async (provider, address) => {
-    try {
-      const blockHex = await provider.request({ method: 'eth_blockNumber' });
-      const gasHex = await provider.request({ method: 'eth_gasPrice' });
-      const chainIdHex = await provider.request({ method: 'eth_chainId' });
-      
-      setBlockNumber(parseInt(blockHex, 16).toString());
-      setGasPrice((parseInt(gasHex, 16) / 1e9).toFixed(4) + ' Gwei');
-      setCurrentChainId(chainIdHex.toLowerCase());
-      
-      if (address) {
-        const balHex = await provider.request({ method: 'eth_getBalance', params: [address, 'latest'] });
-        setBalance((parseInt(balHex, 16) / 1e18).toFixed(4));
-        
-        if (chainIdHex.toLowerCase() === '0x4cef52' && window.ethers) {
-          try {
-            const ethersProvider = new window.ethers.BrowserProvider(provider);
-            const eurcContract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function balanceOf(address) view returns (uint256)", "function decimals() view returns (uint8)"], ethersProvider);
-            const eurcBal = await eurcContract.balanceOf(address);
-            const decimals = await eurcContract.decimals();
-            setEurcBalance(parseFloat(window.ethers.formatUnits(eurcBal, decimals)).toFixed(2));
-          } catch (err) { setEurcBalance('0.00'); }
-        } else { setEurcBalance('0.00'); }
-      }
-    } catch (e) {}
-  };
-
-  useEffect(() => {
-    let interval;
-    if (activeProvider && walletAddress) {
-      fetchNetworkData(activeProvider, walletAddress);
-      interval = setInterval(() => fetchNetworkData(activeProvider, walletAddress), 5000);
+  const armTimer = useCallback((task) => {
+    const existing = timersRef.current.get(task.id)
+    if (existing) clearTimeout(existing)
+    const delay = task.triggerAt - Date.now()
+    if (delay <= 0) {
+      markReady(task.id)
+      return
     }
-    return () => clearInterval(interval);
-  }, [activeProvider, walletAddress]);
-    useEffect(() => {
-    if (!activeProvider) return;
-    const handleAccountsChanged = (accounts) => {
-      if (!accounts || accounts.length === 0) disconnectWallet();
-      else { setWalletAddress(accounts[0]); fetchNetworkData(activeProvider, accounts[0]); addLog(`Account switched: ${accounts[0]}`, 'warning'); }
-    };
-    const handleChainChanged = (chainId) => {
-      setCurrentChainId(chainId.toLowerCase());
-      addLog(`Network switched automatically by wallet.`, 'info');
-      fetchNetworkData(activeProvider, walletAddress);
-    };
-    activeProvider.on && activeProvider.on('accountsChanged', handleAccountsChanged);
-    activeProvider.on && activeProvider.on('chainChanged', handleChainChanged);
+    const handle = setTimeout(() => {
+      timersRef.current.delete(task.id)
+      if (task.triggerAt - Date.now() > 0) armTimer(task)
+      else markReady(task.id)
+    }, Math.min(delay, MAX_TIMER_MS))
+    timersRef.current.set(task.id, handle)
+  }, [markReady])
+
+  const releaseWallet = useCallback(() => {
+    dataReadyRef.current = false
+    setReadyAddress(null)
+    for (const handle of timersRef.current.values()) clearTimeout(handle)
+    timersRef.current.clear()
+    historyRef.current = []
+    tasksRef.current = []
+    setTxHistory([])
+    setTasks([])
+  }, [])
+
+  const refresh = useCallback(async () => {
+    if (!providerRef.current) return
+    if (refreshingRef.current) {
+      refreshAgainRef.current = true
+      return
+    }
+    refreshingRef.current = true
+    try {
+      for (let pass = 0; pass < 3; pass += 1) {
+        refreshAgainRef.current = false
+        try {
+          const next = await readWalletSnapshot(providerRef.current)
+          if (addressRef.current && addressRef.current !== next.account) {
+            releaseWallet()
+            pushLog('Wallet account changed. Payment data was reloaded.', 'warning')
+          }
+          addressRef.current = next.account
+          setWalletAddress(next.account)
+          setChainId(next.chainId)
+          setSnapshot(next.network ? next : null)
+          setBalanceError('')
+          lastBalanceErrorRef.current = ''
+        } catch (error) {
+          const wrapped = toUserError(error)
+          console.error(wrapped.message, error)
+          setSnapshot(null)
+          setBalanceError(wrapped.message)
+          if (lastBalanceErrorRef.current !== wrapped.message) {
+            lastBalanceErrorRef.current = wrapped.message
+            pushLog(wrapped.message, 'error')
+          }
+        }
+        if (!refreshAgainRef.current) break
+      }
+    } finally {
+      refreshingRef.current = false
+    }
+  }, [pushLog, releaseWallet])
+
+  useEffect(() => {
+    try { localStorage.setItem('nexoria.theme', isDark ? 'dark' : 'light') } catch (error) { console.error(error) }
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light'
+    document.body.style.backgroundColor = isDark ? '#020617' : '#f1f5f9'
+  }, [isDark])
+
+  useEffect(() => {
+    if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
+
+  useEffect(() => {
+    if (!eip1193?.on) return undefined
+    const onAccounts = (accounts) => {
+      if (!accounts?.length) {
+        disconnect()
+        return
+      }
+      void refresh()
+    }
+    const onChain = () => { void refresh() }
+    eip1193.on('accountsChanged', onAccounts)
+    eip1193.on('chainChanged', onChain)
     return () => {
-      activeProvider.removeListener && activeProvider.removeListener('accountsChanged', handleAccountsChanged);
-      activeProvider.removeListener && activeProvider.removeListener('chainChanged', handleChainChanged);
-    };
-  }, [activeProvider, walletAddress]);
-
-  const executeConnection = async (targetProvider) => {
-    try {
-      setIsConnecting(true); setShowWalletModal(false); 
-      try { await targetProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } catch (e) {}
-      const accounts = await targetProvider.request({ method: 'eth_requestAccounts' });
-      const address = accounts[0];
-      
-      setActiveProvider(targetProvider); 
-      setWalletAddress(address);
-      await fetchNetworkData(targetProvider, address);
-      
-      addLog(`Wallet Connected: ${address}`, 'success');
-      setIsConnecting(false); confetti({ particleCount: 150, spread: 80, origin: { y: 0.3 } });
-    } catch (error) { setIsConnecting(false); addLog(`Connection failed.`, 'error'); }
-  };
-
-  const switchNetwork = async (chainId) => {
-    if (!activeProvider) return alert("Connect wallet first!");
-    addLog(`Requesting network switch in wallet...`, 'process');
-    try {
-      await activeProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId }] });
-    } catch (e) {
-      if (e.code === 4902 && chainId === '0x4cef52') {
-        await activeProvider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4cef52', chainName: 'Arc Testnet', rpcUrls: ['https://rpc.testnet.arc.network'], nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, blockExplorerUrls: ['https://testnet.arcscan.app'] }] });
-      } else { addLog(`Network switch cancelled by user.`, 'error'); }
+      eip1193.removeListener?.('accountsChanged', onAccounts)
+      eip1193.removeListener?.('chainChanged', onChain)
     }
-  };
+  }, [eip1193, refresh])
 
-  const handleProviderSelect = (type) => {
-    if (!window.ethereum) return alert("No Web3 wallet detected!");
-    const provs = window.ethereum.providers || [window.ethereum];
-    const prov = type === 'rabby' ? (provs.find(p => p.isRabby) || window.ethereum) : (provs.find(p => p.isMetaMask && !p.isRabby) || window.ethereum);
-    executeConnection(prov);
-  };
+  useEffect(() => {
+    if (!eip1193 || !walletAddress) return undefined
+    const timer = setInterval(() => { void refresh() }, 8000)
+    return () => clearInterval(timer)
+  }, [eip1193, walletAddress, refresh])
 
-  const disconnectWallet = () => {
-    setWalletAddress(null); setActiveProvider(null); setCurrentChainId(null); setBalance('0.00'); setEurcBalance('0.00');
-    setBlockNumber('SYNCING...'); setGasPrice('SYNCING...'); setTerminalLogs([]); setTxHistory([]);
-    addLog(`Wallet disconnected successfully.`, 'info');
-  };
+  useEffect(() => {
+    if (!walletAddress) return undefined
+    let cancelled = false
+    const timers = timersRef.current
+    dataReadyRef.current = false
+    for (const handle of timers.values()) clearTimeout(handle)
+    timers.clear()
 
-  const sendToken = async (token, to, amount) => {
-    if (!window.ethers || !window.ethers.isAddress(to)) throw new Error("Invalid recipient address");
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) throw new Error("Amount must be greater than 0");
-
-    if (token === 'NATIVE') {
-      if (numAmount >= parseFloat(balance)) throw new Error(`Insufficient funds for gas! Please send slightly less than ${balance}.`);
-      const val = window.ethers.parseEther(amount.toString()).toString(16);
-      const tx = await activeProvider.request({
-        method: 'eth_sendTransaction',
-        params: [{ from: walletAddress, to, value: '0x' + val }]
-      });
-      return tx;
-    } else if (token === 'EURC') {
-      if (currentChainId !== '0x4cef52') throw new Error("EURC is only supported on Arc Testnet.");
-      if (numAmount > parseFloat(eurcBalance)) throw new Error(`Insufficient EURC balance!`);
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(
-        CONTRACTS['0x4cef52'].eurc,
-        ["function transfer(address, uint256) returns (bool)", "function decimals() view returns (uint8)"],
-        signer
-      );
-      const decimals = await contract.decimals();
-      const tx = await contract.transfer(to, window.ethers.parseUnits(amount, decimals));
-      return tx.hash;
-    }
-  };
-    const handleAiCommand = async () => {
-    if (!aiCommand || !activeProvider || !walletAddress) return alert("Please connect wallet first!");
-    addLog(`[AI INPUT] ${aiCommand}`, 'info'); setIsAiProcessing(true);
-    const regex = /send\s+([\d.]+)\s*([a-zA-Z]+)?\s*(?:to\s+)?(0x[a-fA-F0-9]{40})/gi;
-    let match, intents = [];
-    while ((match = regex.exec(aiCommand)) !== null) { 
-      let tokenStr = (match[2] || 'NATIVE').toUpperCase();
-      if (tokenStr === nativeSymbol.toUpperCase() || tokenStr === 'NATIVE') {
-          tokenStr = 'NATIVE';
-      } else if (tokenStr === 'EURC') {
-          tokenStr = 'EURC';
-      } else {
-          tokenStr = 'NATIVE';
+    ;(async () => {
+      const loaded = await loadWalletState(walletAddress)
+      if (cancelled) return
+      const normalized = normalizeTasks(loaded.state.tasks)
+      historyRef.current = loaded.state.txHistory
+      tasksRef.current = normalized
+      remoteWritableRef.current = loaded.remoteWritable
+      setTxHistory(loaded.state.txHistory)
+      setTasks(normalized)
+      if (loaded.localError) pushLog(loaded.localError.message, 'error')
+      if (loaded.remoteError) pushLog(loaded.remoteError.message, 'warning')
+      const dropped = loaded.state.dropped
+      if (dropped.history || dropped.tasks) {
+        pushLog(`Ignored ${dropped.history} history rows and ${dropped.tasks} tasks that failed validation.`, 'warning')
       }
-      intents.push({ amount: match[1], token: tokenStr, to: match[3] }); 
-    }
-    if (intents.length === 0) { 
-      addLog(`AI didn't understand. Try: "Send 1 ${nativeSymbol} to 0x..."`, 'warning'); 
-      setIsAiProcessing(false); return; 
-    }
-
-    for (let i = 0; i < intents.length; i++) {
-      const intent = intents[i];
-      const displayToken = intent.token === 'NATIVE' ? nativeSymbol : intent.token;
-      addLog(`[Task ${i+1}/${intents.length}] Routing ${intent.amount} ${displayToken} to ${intent.to.substring(0,6)}...`, 'process');
-      try {
-        const txHash = await sendToken(intent.token, intent.to, intent.amount);
-        addLog(`[Task ${i+1}/${intents.length}] Success! TX: ${txHash}`, 'success');
-        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: intent.amount, token: displayToken, to: intent.to, time: new Date().toLocaleTimeString() }, ...prev]);
-      } catch(e) { addLog(`[Task ${i+1}/${intents.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
-    }
-    confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
-    setAiCommand(''); setIsAiProcessing(false);
-  };
-
-  const handlePayrollCommand = async () => {
-    if (!payrollText || !activeProvider || !walletAddress) return alert("Please connect wallet!");
-    setIsPayrollProcessing(true); addLog(`[PAYROLL] Analyzing recipients...`, 'info');
-    const lines = payrollText.split('\n'); let tasks = [];
-    for (let line of lines) {
-      const trimmed = line.trim(); if (!trimmed) continue;
-      const addrMatch = trimmed.match(/(0x[a-fA-F0-9]{40})/i);
-      if (addrMatch) {
-        const address = addrMatch[1];
-        const lineWithoutAddr = trimmed.replace(address, '');
-        const amountMatch = lineWithoutAddr.match(/([0-9]*[.]?[0-9]+)/);
-        tasks.push({ to: address, amount: amountMatch ? amountMatch[1] : globalAmount });
+      const changed = normalized.some((task, index) => task.status !== loaded.state.tasks[index]?.status)
+      if (changed || loaded.migrated) {
+        const result = await persistWalletState(walletAddress, {
+          updatedAt: loaded.migrated ? Math.max(loaded.state.updatedAt, 1) : Date.now(),
+          txHistory: loaded.state.txHistory,
+          tasks: normalized,
+        }, loaded.remoteWritable)
+        if (cancelled) return
+        if (result.localError) pushLog(result.localError.message, 'error')
+        if (result.remoteError) pushLog(result.remoteError.message, 'warning')
       }
+      if (cancelled) return
+      dataReadyRef.current = true
+      setReadyAddress(walletAddress)
+      for (const task of normalized) {
+        if (task.status === 'pending') armTimer(task)
+      }
+    })().catch((error) => {
+      if (!cancelled) pushLog(toUserError(error).message, 'error')
+    })
+
+    return () => {
+      cancelled = true
+      for (const handle of timers.values()) clearTimeout(handle)
+      timers.clear()
     }
-    if (tasks.length === 0) { addLog(`[PAYROLL] No valid 0x addresses found.`, 'warning'); setIsPayrollProcessing(false); return; }
-    addLog(`[PAYROLL] Found ${tasks.length} recipients. Initiating wallet transfers...`, 'process');
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i]; addLog(`[Dispersion ${i+1}/${tasks.length}] Sending ${task.amount} ${payrollToken}...`, 'process');
+  }, [walletAddress, armTimer, pushLog])
+
+  function disconnect() {
+    for (const handle of timersRef.current.values()) clearTimeout(handle)
+    timersRef.current.clear()
+    providerRef.current = null
+    addressRef.current = null
+    historyRef.current = []
+    tasksRef.current = []
+    dataReadyRef.current = false
+    remoteWritableRef.current = false
+    setEip1193(null)
+    setWalletAddress(null)
+    setChainId(null)
+    setSnapshot(null)
+    setBalanceError('')
+    setReadyAddress(null)
+    setTxHistory([])
+    setTasks([])
+    setLogs([])
+    setAllowanceResult({ key: '', rows: null, error: '' })
+    setRevokingKey('')
+    setContactBook({ owner: '', contacts: [] })
+    setContactName('')
+    setContactAddress('')
+    setEditingContactId('')
+    setContactError('')
+    setPayContactOpen(false)
+    setPayrollContactOpen(false)
+    contactFormOwnerRef.current = ''
+  }
+
+  async function connect(provider) {
+    setIsConnecting(true)
+    setFormError('')
+    try {
+      const accounts = await provider.request({ method: 'eth_requestAccounts' })
+      if (!accounts?.length) throw new Error('The wallet did not return an account.')
+      providerRef.current = provider
+      setEip1193(provider)
+      setShowWalletModal(false)
+      await refresh()
+      pushLog('Wallet connected.', 'success')
+    } catch (error) {
+      const wrapped = toUserError(error)
+      console.error(wrapped.message, error)
+      setFormError(wrapped.message)
+      pushLog(wrapped.message, 'error')
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  async function switchNetwork(hexChainId) {
+    const network = NETWORKS.find((item) => item.hexChainId === hexChainId)
+    if (!network || !providerRef.current) {
+      setFormError('Connect a wallet before switching networks.')
+      return
+    }
+    setFormError('')
+    try {
+      await switchOrAddChain(providerRef.current, network)
+    } catch (error) {
+      setFormError(toUserError(error).message)
+      return
+    }
+    await refresh()
+  }
+
+  function requireReady() {
+    if (!providerRef.current || !addressRef.current) {
+      throw toUserError(new Error('Connect a wallet first.'))
+    }
+    if (!snapshot?.network) throw toUserError(new Error('Switch to Arc before sending. Gas on Arc is USDC.'))
+    if (!dataReadyRef.current) throw toUserError(new Error('Wallet data is still loading.'))
+    return snapshot
+  }
+
+  function transferRows(result, status) {
+    return result.transfers.map((transfer) => ({
+      id: createId(),
+      hash: result.hash,
+      amount: formatToken(BigInt(transfer.amount), 6, 6),
+      token: assetLabel(transfer.asset),
+      to: transfer.to,
+      time: receiptStamp(),
+      status,
+      chainId: result.chainId,
+    }))
+  }
+
+  async function rememberRows(rows, account, taskPatch) {
+    if (!account || (rows.length === 0 && !taskPatch)) return
+    const freshAgainst = (existing) => rows.filter((row) => !existing.some((item) => (
+      item.hash === row.hash && item.to === row.to && item.status === row.status && item.amount === row.amount
+    )))
+    if (addressRef.current === account && dataReadyRef.current) {
+      const fresh = freshAgainst(historyRef.current)
+      if (fresh.length > 0) commitHistory([...fresh, ...historyRef.current], account)
+      return
+    }
+    const pending = saveQueueRef.current.then(() => appendWalletHistory(account, rows, taskPatch))
+    saveQueueRef.current = pending.then(() => {}, () => {})
+    const saved = await pending
+    if (saved.localError) pushLog(saved.localError.message, 'error')
+    if (saved.remoteError) pushLog(saved.remoteError.message, 'warning')
+    if (addressRef.current === account && dataReadyRef.current) {
+      const fresh = freshAgainst(historyRef.current)
+      if (fresh.length > 0) commitHistory([...fresh, ...historyRef.current], account)
+    }
+  }
+
+  async function safeRemember(rows, account) {
+    try {
+      await rememberRows(rows, account)
+    } catch (error) {
+      pushLog(toUserError(error).message, 'warning')
+    }
+  }
+
+  function assertSameWallet(account, hash) {
+    if (!accountMoved(account)) return
+    throw new AppError(
+      `The wallet account changed after the transaction was sent. Hash ${hash}. The receipt was saved to the previous account.`,
+      { code: 'ACCOUNT', hash },
+    )
+  }
+
+  async function noteReverted(error, transfers, account, chainId, taskPatch) {
+    const wrapped = toUserError(error)
+    if (wrapped.code !== 'REVERTED' || typeof wrapped.hash !== 'string' || !/^0x[a-fA-F0-9]{64}$/.test(wrapped.hash)) return
+    try {
+      await rememberRows(transferRows({
+        hash: wrapped.hash,
+        chainId: wrapped.chainId ?? chainId,
+        transfers,
+      }, 'reverted'), account, taskPatch)
+    } catch (storeError) {
+      pushLog(toUserError(storeError).message, 'warning')
+    }
+  }
+
+  function accountMoved(account) {
+    return addressRef.current !== account
+  }
+
+  async function runAction(setBusy, action) {
+    if (actionLockRef.current) return
+    actionLockRef.current = true
+    setFormError('')
+    setBusy(true)
+    try {
+      await action()
+    } catch (error) {
+      const wrapped = toUserError(error)
+      console.error(wrapped.message, error)
+      setFormError(wrapped.message)
+      pushLog(wrapped.message, wrapped.code === 'REJECTED' || wrapped.code === 'ACCOUNT' ? 'warning' : 'error')
+    } finally {
+      actionLockRef.current = false
+      setBusy(false)
+    }
+  }
+
+  function celebrate() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    confetti({ particleCount: 120, spread: 70, origin: { y: 0.3 } })
+  }
+
+  function sendPayment(asset) {
+    runAction(setIsPaying, async () => {
+      const ready = requireReady()
+      const account = addressRef.current
+      const recipient = assertAddress(payAddress, 'Recipient')
+      const amount = parseAmount(payAmount, 6)
+      const gen = guardGenRef.current + 1
+      guardGenRef.current = gen
+      const report = await analyzeSendGuard({
+        eip1193: providerRef.current,
+        recipient,
+        history: historyRef.current,
+        expectedChainId: ready.network.chainId,
+      })
+      if (guardGenRef.current !== gen || addressRef.current !== account) {
+        throw new AppError('The payment details changed. Review Send Guard and submit it again.')
+      }
+      setGuardResult({
+        key: `${account}:${report.chainId}:${report.address}:${guardNonce}`,
+        report,
+        error: '',
+      })
+      if (!guardAllowsSend(report, guardAck)) {
+        throw new AppError(
+          report.level === 'contract'
+            ? 'Send Guard: this recipient is a smart contract. Acknowledge the warning before sending.'
+            : 'Send Guard: this is a new wallet. Acknowledge the warning before sending.',
+        )
+      }
+      const transfers = [{
+        asset,
+        to: recipient,
+        amount,
+      }]
+      let result
       try {
-        const txHash = await sendToken(payrollToken, task.to, task.amount);
-        addLog(`[Dispersion ${i+1}/${tasks.length}] Success! TX: ${txHash}`, 'success');
-        setTxHistory(prev => [{ id: Date.now() + i, hash: txHash, amount: task.amount, token: payrollToken, to: task.to, time: new Date().toLocaleTimeString() }, ...prev]);
-      } catch(e) { addLog(`[Dispersion ${i+1}/${tasks.length}] Failed: ${e.message || 'rejected'}`, 'error'); break; }
+        result = await sendTransfers({
+          eip1193: providerRef.current,
+          transfers,
+          expectedChainId: ready.network.chainId,
+        })
+      } catch (error) {
+        await noteReverted(error, transfers, account, ready.network.chainId)
+        throw error
+      }
+      await safeRemember(transferRows(result, 'confirmed'), account)
+      setPayAddress('')
+      setPayAmount('')
+      assertSameWallet(account, result.hash)
+      pushLog(`${assetLabel(asset)} payment confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
+      celebrate()
+      await refresh()
+    })
+  }
+
+  function exportLedger() {
+    runAction(setIsExporting, async () => {
+      if (!addressRef.current || !dataReadyRef.current) {
+        throw toUserError(new Error('Connect a wallet first.'))
+      }
+      const account = addressRef.current
+      await saveQueueRef.current
+      if (addressRef.current !== account) {
+        throw new AppError('The wallet account changed. Export the ledger again.')
+      }
+      const receipts = await readSavedReceipts(account)
+      if (addressRef.current !== account) {
+        throw new AppError('The wallet account changed. Export the ledger again.')
+      }
+      if (receipts.length === 0) throw new AppError('No saved receipts to export.')
+      const day = new Date().toISOString().slice(0, 10)
+      downloadCsv(`nexoria-ledger-${account.slice(2, 8)}-${day}.csv`, receiptsToCsv(receipts))
+      pushLog(`Exported ${receipts.length} saved receipt${receipts.length === 1 ? '' : 's'}.`, 'success')
+    })
+  }
+
+  function submitContact() {
+    runAction(setIsSavingContact, async () => {
+      if (!addressRef.current || !dataReadyRef.current) {
+        throw toUserError(new Error('Connect a wallet first.'))
+      }
+      const account = addressRef.current
+      const current = contactBook.owner === account ? contactBook.contacts : await loadContacts(account)
+      const next = upsertContact(current, {
+        id: editingContactId,
+        name: contactName,
+        address: contactAddress,
+      })
+      const saved = await saveContacts(account, next)
+      if (addressRef.current !== account) {
+        throw new AppError('The wallet account changed. Save the contact again.')
+      }
+      contactGenRef.current += 1
+      setContactBook({ owner: account, contacts: saved })
+      setContactName('')
+      setContactAddress('')
+      setEditingContactId('')
+      setContactError('')
+      pushLog(editingContactId ? 'Contact updated.' : 'Contact saved.', 'success')
+    })
+  }
+
+  function deleteContact(contact) {
+    if (!window.confirm(`Remove ${contact.name} from contacts?`)) return
+    runAction(setIsSavingContact, async () => {
+      if (!addressRef.current || !dataReadyRef.current) {
+        throw toUserError(new Error('Connect a wallet first.'))
+      }
+      const account = addressRef.current
+      const current = contactBook.owner === account ? contactBook.contacts : await loadContacts(account)
+      const saved = await saveContacts(account, removeContact(current, contact.id))
+      if (addressRef.current !== account) {
+        throw new AppError('The wallet account changed. Save the contact again.')
+      }
+      contactGenRef.current += 1
+      setContactBook({ owner: account, contacts: saved })
+      if (editingContactId === contact.id) {
+        setContactName('')
+        setContactAddress('')
+        setEditingContactId('')
+      }
+      pushLog('Contact removed.', 'info')
+    })
+  }
+
+  function usePayContact(contact) {
+    setPayAddress(contact.address)
+    setPayContactOpen(false)
+    setPayFieldFocus(false)
+  }
+
+  function usePayrollContact(contact) {
+    setPayrollCsvErrors([])
+    setPayrollCsvSummary('')
+    setPayrollText((current) => {
+      const trimmed = current.replace(/\s+$/, '')
+      const lines = trimmed ? trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : []
+      if (lines.some((line) => line.toLowerCase().startsWith(contact.address))) return trimmed
+      return trimmed ? `${trimmed}\n${contact.address}` : contact.address
+    })
+    setPayrollContactOpen(false)
+  }
+
+  function downloadPayrollSample() {
+    try {
+      downloadCsv('nexoria-payroll-sample.csv', PAYROLL_SAMPLE_CSV)
+    } catch (error) {
+      setPayrollCsvSummary('')
+      setPayrollCsvErrors([toUserError(error).message])
     }
-    confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
-    setPayrollText(''); setIsPayrollProcessing(false);
-  };
+  }
 
-  const executeScheduledTask = async (task) => {
-    addLog(`[AGENT] Executing scheduled transfer...`, 'process');
-    try {
-      const txHash = await sendToken(task.token, task.address, task.amount);
-      addLog(`[AGENT] Scheduled Execution Success! TX: ${txHash}`, 'success');
-      setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: task.amount, token: task.token, to: task.address, time: new Date().toLocaleTimeString() }, ...prev]);
-      setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Completed' } : t));
-      confetti(); setTimeout(() => fetchNetworkData(activeProvider, walletAddress), 3000);
-    } catch (e) {
-      addLog(`[AGENT] Task failed: ${e.message || 'rejected'}`, 'error');
-      setActiveTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'Failed' } : t));
+  function readPayrollCsv(event) {
+    const input = event.currentTarget
+    const file = input.files && input.files[0]
+    input.value = ''
+    if (!file) return
+    const filename = String(file.name || '')
+    const type = String(file.type || '')
+    const looksCsv = /\.csv$/i.test(filename) || type === 'text/csv' || type === 'application/vnd.ms-excel'
+    if (!looksCsv) {
+      setPayrollCsvSummary('')
+      setPayrollCsvErrors(['Choose a .csv file.'])
+      return
     }
-  };
+    if (file.size > 64 * 1024) {
+      setPayrollCsvSummary('')
+      setPayrollCsvErrors(['That CSV is too large. A payroll batch allows 25 recipients.'])
+      return
+    }
+    file.text().then((text) => {
+      const result = payrollCsvToText(text, shownContacts)
+      if (result.errors.length > 0) {
+        setPayrollCsvSummary('')
+        setPayrollCsvErrors(result.errors)
+        return
+      }
+      setPayrollText(result.text)
+      setPayrollCsvErrors([])
+      setPayrollCsvSummary(`${result.count} recipient${result.count === 1 ? '' : 's'} loaded from the CSV. Review the list, then send payroll.`)
+      setPayrollContactOpen(false)
+      pushLog(`Loaded ${result.count} payroll recipient${result.count === 1 ? '' : 's'} from CSV.`, 'info')
+    }).catch((error) => {
+      setPayrollCsvSummary('')
+      setPayrollCsvErrors([toUserError(error).message])
+    })
+  }
 
-  const handleScheduleTask = () => {
-    if (!activeProvider || !autoAddress || !autoAmount || !autoTime) return alert("Fill all fields!");
-    if (!window.ethers || !window.ethers.isAddress(autoAddress)) return alert("Invalid address!");
-    if (parseFloat(autoAmount) <= 0) return alert("Amount must be greater than 0");
+  function revokeListedAllowance(row) {
+    const key = `${row.asset}:${row.spender}`
+    runAction((busy) => setRevokingKey(busy ? key : ''), async () => {
+      if (!providerRef.current || !addressRef.current) {
+        throw toUserError(new Error('Connect a wallet first.'))
+      }
+      if (!dataReadyRef.current) throw toUserError(new Error('Wallet data is still loading.'))
+      const network = getArcNetwork(chainId)
+      if (!network?.testnet) throw new AppError('Switch to Arc Testnet before revoking an allowance.')
+      const account = addressRef.current
+      const result = await revokeAllowance({
+        eip1193: providerRef.current,
+        asset: row.asset,
+        spender: row.spender,
+        expectedChainId: network.chainId,
+      })
+      assertSameWallet(account, result.hash)
+      pushLog(`Allowance set to zero. ${result.hash}`, 'success')
+      celebrate()
+      setAllowanceNonce((value) => value + 1)
+    })
+  }
 
-    const delayMs = parseFloat(autoTime) * 60000;
-    const taskId = Date.now();
-    const newTask = { id: taskId, address: autoAddress, amount: autoAmount, token: autoToken, time: autoTime, status: 'Pending', triggerAt: taskId + delayMs };
-    addLog(`[AGENT] Task queued: Send ${autoAmount} ${autoToken} in ${autoTime} min.`, 'process');
-    setActiveTasks(prev => [...prev, newTask]);
-    setTimeout(() => executeScheduledTask(newTask), delayMs);
-    setAutoAddress(''); setAutoAmount('');
-  };
-
-  const handleSendPager = async () => {
-    if (!activeProvider || !pagerAddress || !pagerMessage) return alert("Enter address & message!");
-    if (!window.ethers || !window.ethers.isAddress(pagerAddress)) return alert("Invalid recipient address!");
-    setIsPagerSending(true); addLog(`[PAGER] Encoding message to Hex data...`, 'process');
+  async function executeTask(task) {
+    if (inFlightRef.current.has(task.id)) return
+    if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'submitting') return
+    const ready = requireReady()
+    const account = addressRef.current
+    if (task.chainId !== ready.network.chainId) {
+      throw toUserError(new Error('This task was scheduled on a different Arc network. Switch back before signing it.'))
+    }
+    inFlightRef.current.add(task.id)
+    commitTasks(tasksRef.current.map((item) => (
+      item.id === task.id ? { ...item, status: 'submitting', error: '' } : item
+    )), account)
+    let transfers = []
+    const completed = (tasks) => tasks.map((item) => (
+      item.id === task.id ? { ...item, status: 'completed', error: '' } : item
+    ))
     try {
-      const hexData = window.ethers.hexlify(window.ethers.toUtf8Bytes(pagerMessage));
-      addLog(`[PAGER] Opening Wallet for On-Chain Transmission...`, 'process');
-      const txHash = await activeProvider.request({ 
-        method: 'eth_sendTransaction', 
-        params: [{ from: walletAddress, to: pagerAddress, value: '0x0', data: hexData }] 
-      });
-      addLog(`[PAGER] Message permanently inscribed! TX: ${txHash}`, 'success');
-      setTxHistory(prev => [{ id: Date.now(), hash: txHash, amount: '0.0', token: 'MSG', to: pagerAddress, time: new Date().toLocaleTimeString() }, ...prev]);
-      confetti(); setPagerMessage('');
-    } catch (e) { addLog(`[PAGER] Transmission rejected/failed.`, 'error'); }
-    setIsPagerSending(false);
-  };
+      const amount = parseAmount(task.amount, 6)
+      transfers = [{ asset: task.asset, to: task.address, amount }]
+      const result = await sendTransfers({
+        eip1193: providerRef.current,
+        transfers,
+        expectedChainId: task.chainId,
+      })
+      try {
+        await rememberRows(transferRows(result, 'confirmed'), account, completed)
+      } catch (storeError) {
+        pushLog(toUserError(storeError).message, 'warning')
+      }
+      if (!accountMoved(account)) commitTasks(completed(tasksRef.current), account)
+      assertSameWallet(account, result.hash)
+      pushLog(`Scheduled payment confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
+      celebrate()
+      await refresh()
+    } catch (error) {
+      const wrapped = toUserError(error)
+      if (wrapped.code !== 'ACCOUNT') {
+        const status = wrapped.code === 'REJECTED' ? 'ready' : 'failed'
+        const patch = (tasks) => tasks.map((item) => (
+          item.id === task.id ? { ...item, status, error: wrapped.message } : item
+        ))
+        if (wrapped.code === 'REVERTED') await noteReverted(error, transfers, account, task.chainId, patch)
+        if (!accountMoved(account)) commitTasks(patch(tasksRef.current), account)
+        else if (wrapped.code !== 'REVERTED') {
+          try {
+            await rememberRows([], account, patch)
+          } catch (storeError) {
+            pushLog(toUserError(storeError).message, 'warning')
+          }
+        }
+      }
+      throw error
+    } finally {
+      inFlightRef.current.delete(task.id)
+    }
+  }
 
-  const handleDeployToken = async () => {
-    if (!activeProvider || !forgeName || !forgeSymbol || !forgeSupply) return alert("Fill token details!");
-    if (currentChainId !== '0x4cef52') return alert("Smart Contract Forging is currently only supported on Arc Testnet!");
-    if (parseFloat(forgeSupply) <= 0) return alert("Supply must be greater than 0!");
+  const dataReady = Boolean(walletAddress) && readyAddress === walletAddress
+  const arc = getArcNetwork(chainId)
+  const allowanceRequestKey = (
+    activeModule === 'utilities'
+    && utilityTab === 'allowance'
+    && eip1193
+    && walletAddress
+    && dataReady
+    && arc?.testnet
+  ) ? `${walletAddress}:${arc.chainId}:${allowanceNonce}` : ''
+  const allowanceOwnerPrefix = walletAddress && arc ? `${walletAddress}:${arc.chainId}:` : ''
+  const allowanceSameOwner = Boolean(
+    allowanceOwnerPrefix
+    && allowanceResult.key.startsWith(allowanceOwnerPrefix)
+    && Array.isArray(allowanceResult.rows)
+  )
+  let allowancePhase = 'hidden'
+  if (activeModule === 'utilities' && utilityTab === 'allowance') {
+    if (!eip1193 || !walletAddress) allowancePhase = 'idle'
+    else if (!dataReady) allowancePhase = 'waiting'
+    else if (!arc?.testnet) allowancePhase = 'wrong-network'
+    else if (allowanceResult.key !== allowanceRequestKey) allowancePhase = allowanceSameOwner ? 'refreshing' : 'loading'
+    else if (allowanceResult.error) allowancePhase = 'error'
+    else allowancePhase = 'ready'
+  }
+  const shownAllowances = (
+    allowancePhase === 'ready' || allowancePhase === 'refreshing' || allowancePhase === 'error'
+  ) ? allowanceResult.rows : null
 
-    setIsForging(true); addLog(`[FORGE] Deploying ${forgeName} (${forgeSymbol}) via factory...`, 'process');
+  let paymentDraft = null
+  if (payAddress.trim() && payAmount.trim()) {
     try {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const factory = new window.ethers.Contract(CONTRACTS['0x4cef52'].factory, FACTORY_ABI, signer);
-      const tx = await factory.createToken(forgeName, forgeSymbol, forgeSupply);
-      addLog(`[FORGE] Transaction sent, waiting for confirmation...`, 'process');
-      const receipt = await tx.wait();
+      const to = assertAddress(payAddress, 'Recipient')
+      const amount = parseAmount(payAmount, 6)
+      if (amount > 0n) paymentDraft = { to, amount }
+    } catch {
+      paymentDraft = null
+    }
+  }
+  const guardRequestKey = (
+    activeModule === 'payments'
+    && eip1193
+    && walletAddress
+    && dataReady
+    && arc
+    && paymentDraft
+  ) ? `${walletAddress}:${arc.chainId}:${paymentDraft.to}:${guardNonce}` : ''
+  const guardPhase = !paymentDraft
+    ? 'idle'
+    : !guardRequestKey
+      ? 'blocked'
+      : guardResult.key !== guardRequestKey
+        ? 'checking'
+        : guardResult.error
+          ? 'error'
+          : 'ready'
+  const guardReport = guardPhase === 'ready' ? guardResult.report : null
+  const guardCleared = guardAllowsSend(guardReport, guardAck)
 
-      const event = receipt.logs
-        .map(log => { try { return factory.interface.parseLog(log); } catch { return null; } })
-        .find(parsed => parsed && parsed.name === 'TokenCreated');
-      const newTokenAddress = event ? event.args.tokenAddress : null;
+  useEffect(() => {
+    if (!allowanceRequestKey || !arc?.testnet) return undefined
+    let cancelled = false
+    const key = allowanceRequestKey
+    const account = walletAddress
+    const expectedChainId = arc.chainId
+    ;(async () => {
+      try {
+        const rows = await listActiveAllowances({
+          eip1193: providerRef.current,
+          expectedChainId,
+        })
+        if (cancelled || addressRef.current !== account) return
+        setAllowanceResult({ key, rows, error: '' })
+      } catch (error) {
+        if (cancelled || addressRef.current !== account) return
+        console.error(error)
+        const message = toUserError(error).message
+        setAllowanceResult((current) => ({
+          key,
+          rows: current.key.startsWith(`${account}:${expectedChainId}:`) && Array.isArray(current.rows) ? current.rows : null,
+          error: message,
+        }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [allowanceRequestKey, arc, walletAddress])
 
-      addLog(`[FORGE] Token Deployed! Address: ${newTokenAddress || 'check tx on explorer'}`, 'success');
-      setTxHistory(prev => [{ id: Date.now(), hash: tx.hash, amount: forgeSupply, token: forgeSymbol, to: newTokenAddress || 'New Contract', time: new Date().toLocaleTimeString() }, ...prev]);
-      confetti({ particleCount: 200 }); setForgeName(''); setForgeSymbol(''); setForgeSupply('1000000');
-    } catch (e) { addLog(`[FORGE] Deployment failed: ${e.message || 'rejected'}`, 'error'); }
-    setIsForging(false);
-  };
+  useEffect(() => {
+    const gen = guardGenRef.current + 1
+    guardGenRef.current = gen
+    if (!guardRequestKey) return undefined
+    const [account, chainText, recipient] = guardRequestKey.split(':')
+    const expectedChainId = Number(chainText)
+    const key = guardRequestKey
+    ;(async () => {
+      try {
+        const report = await analyzeSendGuard({
+          eip1193: providerRef.current,
+          recipient,
+          history: historyRef.current,
+          expectedChainId,
+        })
+        if (guardGenRef.current !== gen || addressRef.current !== account) return
+        setGuardResult({ key, report, error: '' })
+      } catch (error) {
+        if (guardGenRef.current !== gen || addressRef.current !== account) return
+        console.error(error)
+        setGuardResult({ key, report: null, error: toUserError(error).message })
+      }
+    })()
+    return undefined
+  }, [guardRequestKey])
 
-  const checkAllowance = async () => {
-    if (!walletAddress || !window.ethers || !spenderAddress) return alert("Enter spender address!");
-    if (currentChainId !== '0x4cef52') return alert("Revoke feature is optimized for Arc Testnet currently.");
-    setIsChecking(true); setCurrentAllowance(null);
-    addLog(`Scanning allowance for spender: ${spenderAddress.substring(0,8)}...`, 'process');
+  const contactOwner = dataReady && walletAddress ? walletAddress : ''
+  const shownContacts = contactBook.owner === walletAddress && dataReady ? contactBook.contacts : []
+  let matchedPayContact = null
+  if (payAddress.trim()) {
     try {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const contract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function allowance(address, address) view returns (uint256)", "function decimals() view returns (uint8)"], provider);
-      const allow = await contract.allowance(walletAddress, spenderAddress);
-      const formatted = window.ethers.formatUnits(allow, await contract.decimals());
-      setCurrentAllowance(formatted.toString());
-      addLog(`Allowance found: ${formatted} EURC`, parseFloat(formatted) > 0 ? 'warning' : 'success');
-    } catch (e) { addLog(`Scan failed. Check contract address.`, 'error'); } 
-    setIsChecking(false);
-  };
+      const exact = assertAddress(payAddress, 'Recipient')
+      matchedPayContact = shownContacts.find((row) => row.address === exact) ?? null
+    } catch {
+      matchedPayContact = null
+    }
+  }
+  const payQueryIsExact = Boolean(matchedPayContact)
+  const showPayContacts = shownContacts.length > 0 && (
+    payContactOpen || (payFieldFocus && payAddress.trim().length > 0 && !payQueryIsExact)
+  )
 
-  const revokeAllowance = async () => {
-    if (!walletAddress || !window.ethers || !spenderAddress) return;
-    setIsChecking(true);
+  useEffect(() => {
+    if (!contactOwner) return undefined
+    let cancelled = false
+    const ownerChanged = contactFormOwnerRef.current !== contactOwner
+    const generation = contactGenRef.current
+    contactFormOwnerRef.current = contactOwner
+    ;(async () => {
+      try {
+        const rows = await loadContacts(contactOwner)
+        if (cancelled || addressRef.current !== contactOwner || contactGenRef.current !== generation) return
+        setContactBook({ owner: contactOwner, contacts: rows })
+        setContactError('')
+        if (ownerChanged) {
+          setContactName('')
+          setContactAddress('')
+          setEditingContactId('')
+        }
+      } catch (error) {
+        if (cancelled || addressRef.current !== contactOwner || contactGenRef.current !== generation) return
+        console.error(error)
+        setContactBook({ owner: contactOwner, contacts: [] })
+        setContactError(toUserError(error).message)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [contactOwner])
+
+  const inputClass = `w-full rounded-lg border p-2.5 font-mono text-sm outline-none ${isDark ? 'border-white/10 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-900'}`
+  const cardClass = isDark ? 'border-white/5 bg-slate-900' : 'border-slate-300 bg-white shadow-lg'
+  const payrollPreview = (() => {
+    if (!payrollText.trim()) return ''
     try {
-      const provider = new window.ethers.BrowserProvider(activeProvider);
-      const signer = await provider.getSigner();
-      const contract = new window.ethers.Contract(CONTRACTS['0x4cef52'].eurc, ["function approve(address, uint256) returns (bool)"], signer);
-      const tx = await contract.approve(spenderAddress, 0);
-      await tx.wait(); setCurrentAllowance('0.0');
-      addLog(`REVOKE SUCCESSFUL. Allowance set to 0.`, 'success'); confetti();
-    } catch (e) { addLog(`Revoke failed.`, 'error'); }
-    setIsChecking(false);
-  };
-    const bgMain = isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800';
-  const bgCard = isDark ? 'bg-slate-900 border-white/5' : 'bg-white border-slate-300 shadow-lg';
-  const bgHeader = isDark ? 'bg-slate-950/80 border-white/5' : 'bg-white/90 border-slate-300 shadow-sm';
-  const textMuted = isDark ? 'text-slate-400' : 'text-slate-500';
-  
-  const activeNetInfo = SUPPORTED_NETWORKS[currentChainId] || { name: 'Unknown Network', type: 'CUSTOM', color: 'slate', currency: 'NATIVE', explorer: 'https://testnet.arcscan.app' };
-  const nativeSymbol = activeNetInfo.currency;
+      const rows = parsePayrollList(payrollText, globalAmount)
+      const total = rows.reduce((sum, row) => sum + parseAmount(row.amountText, 6), 0n)
+      return `${rows.length} recipients, ${formatToken(total, 6, 6)} ${assetLabel(payrollAsset)}`
+    } catch (error) {
+      return toUserError(error).message
+    }
+  })()
 
   return (
-    <div className={`min-h-screen font-sans selection:bg-cyan-500/30 transition-colors duration-500 ${bgMain}`}>
+    <div className={`min-h-screen font-sans selection:bg-cyan-500/30 ${isDark ? 'bg-slate-950 text-slate-200' : 'bg-slate-100 text-slate-800'}`}>
       {showWalletModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
-            <div className="flex justify-between items-center text-white font-bold">
-              <span>Select Web3 Wallet</span>
-              <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm space-y-4 rounded-2xl border border-cyan-500/30 bg-slate-900 p-6 text-white shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+            <div className="flex items-center justify-between font-bold">
+              <span>Select wallet</span>
+              <button type="button" onClick={() => setShowWalletModal(false)} className="text-slate-400">✕</button>
             </div>
-            <div className="space-y-3 pt-2">
-              <button onClick={() => handleProviderSelect('rabby')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex justify-between text-cyan-400 font-bold">
-                <span>Rabby Wallet</span> <span className="text-xs bg-cyan-500/10 px-2 py-1 rounded">INSTANT</span>
-              </button>
-              <button onClick={() => handleProviderSelect('metamask')} className="w-full p-4 bg-slate-950 hover:bg-slate-800 border border-white/5 rounded-xl font-mono text-sm flex justify-between text-amber-400 font-bold">
-                <span>MetaMask</span> <span className="text-xs bg-amber-500/10 px-2 py-1 rounded">POPULAR</span>
-              </button>
+            {wallets.length === 0 && <p className="font-mono text-xs text-slate-400">No injected wallet announced itself.</p>}
+            <div className="space-y-3">
+              {wallets.map((wallet) => (
+                <button key={wallet.uuid} type="button" onClick={() => connect(wallet.provider)} className="flex w-full items-center justify-between rounded-xl border border-white/5 bg-slate-950 p-4 font-mono text-sm font-bold text-cyan-400">
+                  <span className="flex items-center gap-2">
+                    {wallet.icon && <img src={wallet.icon} alt="" className="h-5 w-5" />}
+                    {wallet.name}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      <header className={`border-b backdrop-blur-md sticky top-0 z-40 transition-colors duration-500 ${bgHeader}`}>
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Cpu className="w-6 h-6 text-cyan-500" />
-              <span className={`font-bold tracking-widest text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
-              
-              <select value={currentChainId || '0x4cef52'} onChange={(e) => switchNetwork(e.target.value)} className={`hidden sm:inline-block text-[10px] px-2.5 py-1 rounded-full font-mono font-bold shadow-sm outline-none appearance-none cursor-pointer text-center ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
-                <option value="0x4cef52">⚪ ARC TESTNET</option>
-                <option value="0x1" disabled>🔵 ETH MAINNET (Coming Soon)</option>
-                <option value="0x89" disabled>🟣 POLYGON (Coming Soon)</option>
-                <option value="0xa4b1" disabled>🩵 ARBITRUM (Coming Soon)</option>
-              </select>
-            </div>
-            <button onClick={() => setIsDark(!isDark)} className={`p-2 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-amber-400' : 'bg-slate-200 border-slate-300 text-indigo-600'}`}>
-              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      <header className={`sticky top-0 z-40 border-b backdrop-blur-md ${isDark ? 'border-white/5 bg-slate-950/80' : 'border-slate-300 bg-white/90'}`}>
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4">
+          <div className="flex items-center gap-3">
+            <Cpu className="h-6 w-6 text-cyan-500" />
+            <span className={`text-lg font-bold tracking-widest ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
+            <select
+              aria-label="Network"
+              value={arc?.hexChainId ?? ''}
+              onChange={(event) => switchNetwork(event.target.value)}
+              className={`max-w-[9.5rem] rounded-full border px-2 py-1 font-mono text-[10px] font-bold ${isDark ? 'border-white/10 bg-slate-900 text-cyan-400' : 'border-slate-300 bg-slate-100 text-cyan-700'}`}
+            >
+              {!arc && <option value="">Unsupported network</option>}
+              {NETWORKS.map((network) => (
+                <option key={network.chainId} value={network.hexChainId}>{network.name}</option>
+              ))}
+            </select>
+            <button type="button" aria-label="Toggle theme" onClick={() => setIsDark((value) => !value)} className={`rounded-full border p-2 ${isDark ? 'border-white/10 bg-slate-900 text-amber-400' : 'border-slate-300 bg-slate-200 text-indigo-600'}`}>
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <div className={`hidden md:flex items-center gap-2 text-[10px] font-mono px-3 py-1.5 rounded-md font-bold uppercase ${isDark ? 'bg-slate-900 border border-white/10 text-cyan-400' : 'bg-slate-100 border border-slate-300 text-cyan-600'}`}>
-              <Globe className="w-3 h-3 animate-pulse" />
-              <span>{activeNetInfo.name} | BLK: {blockNumber}</span>
+          <div className="flex items-center gap-3">
+            <div className={`hidden items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[10px] font-bold md:flex ${isDark ? 'border-white/10 bg-slate-900 text-cyan-400' : 'border-slate-300 bg-slate-100 text-cyan-700'}`}>
+              <Globe className="h-3 w-3" />
+              <span>{arc ? arc.name : 'Not Arc'} | BLK {snapshot?.telemetry?.blockNumber?.toString() ?? '—'}</span>
             </div>
             {walletAddress ? (
-              <button onClick={disconnectWallet} className={`px-4 py-2 rounded-lg text-sm font-mono font-bold border flex items-center gap-2 ${isDark ? 'bg-slate-900 border-cyan-500/30 text-cyan-400' : 'bg-white border-cyan-500 text-cyan-600'}`}>
-                {walletAddress.substring(0,6)}...{walletAddress.substring(walletAddress.length-4)} <LogOut className="w-4 h-4" />
+              <button type="button" onClick={disconnect} className={`flex items-center gap-2 rounded-lg border px-4 py-2 font-mono text-sm font-bold ${isDark ? 'border-cyan-500/30 bg-slate-900 text-cyan-400' : 'border-cyan-500 bg-white text-cyan-700'}`}>
+                {shortAddress(walletAddress)} <LogOut className="h-4 w-4" />
               </button>
             ) : (
-              <button onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="px-5 py-2 rounded-lg text-sm font-mono font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
-                {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
+              <button type="button" onClick={() => setShowWalletModal(true)} disabled={isConnecting} className="rounded-lg bg-cyan-500 px-5 py-2 font-mono text-sm font-bold text-slate-950 disabled:opacity-50">
+                {isConnecting ? 'CONNECTING…' : 'CONNECT WALLET'}
               </button>
             )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-        <section className={`border rounded-2xl p-6 flex flex-col md:flex-row gap-8 justify-between items-center relative overflow-hidden transition-colors ${bgCard}`}>
-          <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full pointer-events-none" />
-          <div className="space-y-3 relative z-10 flex-1">
-            <div className={`flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] font-mono text-cyan-500`}><Zap className="w-3 h-3" /> Core Liquidity Matrix</div>
-            <div className="flex items-center gap-4">
-              <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset Telemetry</h1>
-              <button onClick={() => fetchNetworkData(activeProvider, walletAddress)} className="p-2 border border-slate-500/30 rounded-lg hover:bg-slate-800 text-slate-400">
-                <Activity className="w-4 h-4" />
-              </button>
-              {currentChainId === '0x4cef52' && (
-                <button onClick={() => window.open('https://faucet.circle.com/', '_blank')} className="px-3 py-1.5 bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/20 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-400 hover:text-white transition-all flex items-center gap-1.5 shadow-sm">
-                  <Droplet className="w-3.5 h-3.5" /> TEST FAUCET
-                </button>
-              )}
-            </div>
-            <p className={`text-xs ${textMuted}`}>Visual representation of your omnichain assets routed through Nexoria.</p>
-          </div>
-          <div className="flex-1 w-full relative z-10 max-w-sm">
-            <div className={`p-4 rounded-xl border space-y-2 ${isDark ? 'bg-slate-950 border-white/5' : 'bg-slate-50 border-slate-200'}`}>
-              <div className="flex justify-between items-center font-mono font-bold text-xs">
-                <span className="text-cyan-500">{nativeSymbol}: {balance}</span>
-                {currentChainId === '0x4cef52' && <span className="text-fuchsia-500">EURC: {eurcBalance}</span>}
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+        {walletAddress && !arc && (
+          <p role="alert" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 font-mono text-xs text-amber-300">
+            This wallet is on chain {chainId}. Nexoria sends only on Arc, where USDC pays the gas.
+          </p>
+        )}
+        {walletAddress && !dataReady && (
+          <p role="status" className={`rounded-xl border p-4 font-mono text-xs ${isDark ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200' : 'border-cyan-600/30 bg-white text-cyan-800'}`}>
+            Loading saved receipts and scheduled payments.
+          </p>
+        )}
+
+        <section className={`relative overflow-hidden rounded-2xl border p-6 ${cardClass}`}>
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-500">
+                <Zap className="h-3 w-3" /> USDC balance
               </div>
-              
-              {(() => {
-                const bal = parseFloat(balance) || 0;
-                const eurc = currentChainId === '0x4cef52' ? (parseFloat(eurcBalance) || 0) : 0;
-                const total = bal + eurc;
-                const nativePct = total > 0 ? ((bal / total) * 100).toFixed(1) : 100.0;
-                const eurcPct = total > 0 ? ((eurc / total) * 100).toFixed(1) : 0.0;
-                
-                return (
-                  <>
-                    <div className="w-full bg-slate-900 rounded-full h-2.5 mt-2 overflow-hidden flex border border-white/10">
-                      <div className="bg-cyan-500 h-full transition-all duration-500" style={{ width: `${nativePct}%` }}></div>
-                      {currentChainId === '0x4cef52' && (
-                        <div className="bg-fuchsia-500 h-full transition-all duration-500" style={{ width: `${eurcPct}%` }}></div>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center font-mono text-[9px] text-slate-500 uppercase tracking-widest mt-1">
-                      <span>{nativePct}% {nativeSymbol}</span>
-                      {currentChainId === '0x4cef52' && <span>{eurcPct}% EURC</span>}
-                    </div>
-                  </>
-                );
-              })()}
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className={`text-3xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Asset telemetry</h1>
+                <button type="button" aria-label="Refresh balances" onClick={() => refresh()} className="rounded-lg border border-slate-500/30 p-2 text-slate-400">
+                  <Activity className="h-4 w-4" />
+                </button>
+                {arc?.testnet && (
+                  <a href={arc.faucet} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 px-3 py-1.5 font-mono text-xs font-bold text-cyan-400">
+                    <Droplet className="h-3.5 w-3.5" /> Testnet faucet
+                  </a>
+                )}
+              </div>
+              <p className="max-w-xl text-xs text-slate-500">
+                Transfers use the 6-decimal USDC and EURC contracts. Gas is reserved from the same USDC balance in 18-decimal native units, with a 20 gwei fee floor.
+              </p>
+            </div>
+            <div className={`w-full max-w-sm space-y-2 rounded-xl border p-4 font-mono text-xs font-bold ${isDark ? 'border-white/5 bg-slate-950' : 'border-slate-200 bg-slate-50'}`}>
+              <div className="flex justify-between text-cyan-500">
+                <span>USDC</span>
+                <span>{snapshot ? formatToken(snapshot.balances.usdc, 6, 6) : '—'}</span>
+              </div>
+              <div className="flex justify-between text-fuchsia-400">
+                <span>EURC</span>
+                <span>{snapshot ? formatToken(snapshot.balances.eurc, 6, 6) : '—'}</span>
+              </div>
+              <div className="flex justify-between text-slate-500">
+                <span>Fee ceiling, 65,000 gas</span>
+                <span>{snapshot ? `${formatToken(snapshot.telemetry.referenceFee, USDC_NATIVE_DECIMALS, 8)} USDC` : '—'}</span>
+              </div>
+              {balanceError && <p role="alert" className="font-normal text-rose-400">{balanceError}</p>}
             </div>
           </div>
         </section>
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-          <div className="md:col-span-4 space-y-6">
-            <div className="space-y-2">
-              <div className={`text-[10px] uppercase tracking-[0.2em] font-mono mb-3 ${textMuted}`}>COMMAND MODULES</div>
-              {coreModules.map((mod) => (
-                <button key={mod.id} onClick={() => setActiveModule(mod.id)} className={`w-full flex p-3 rounded-xl border transition-all text-left items-center gap-3 ${activeModule === mod.id ? (isDark ? 'bg-slate-900 border-cyan-500 shadow-[0_0_15px_rgba(34,211,238,0.1)]' : 'bg-white border-cyan-500 shadow-md') : (isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-200/60 border-slate-300')}`}>
-                  <mod.icon className={`w-5 h-5 ${activeModule === mod.id ? 'text-cyan-500' : 'text-slate-400'}`} />
-                  <div>
-                    <div className={`font-bold text-sm ${activeModule === mod.id ? (isDark ? 'text-white' : 'text-cyan-700') : (isDark ? 'text-slate-300' : 'text-slate-800')}`}>{mod.title}</div>
-                    <div className="text-[9px] font-mono tracking-widest text-slate-500">{mod.subtitle}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-2 pt-4 border-t border-slate-800/50">
-              <div className={`text-[10px] uppercase tracking-[0.2em] font-mono mb-3 ${textMuted}`}>SYSTEM & SECURITY</div>
-              <button onClick={() => setActiveModule('utilities')} className={`w-full flex p-3 rounded-xl border transition-all text-left items-center gap-3 ${activeModule === 'utilities' ? (isDark ? 'bg-slate-900 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.1)]' : 'bg-white border-purple-500 shadow-md') : (isDark ? 'bg-slate-900/50 border-white/5' : 'bg-slate-200/60 border-slate-300')}`}>
-                <Settings className={`w-5 h-5 ${activeModule === 'utilities' ? 'text-purple-500' : 'text-slate-400'}`} />
-                <div>
-                  <div className={`font-bold text-sm ${activeModule === 'utilities' ? (isDark ? 'text-white' : 'text-purple-700') : (isDark ? 'text-slate-300' : 'text-slate-800')}`}>System Utilities</div>
-                  <div className="text-[9px] font-mono tracking-widest text-slate-500">LEDGER, FORGE & REVOKE</div>
-                </div>
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
+          <div className="space-y-3 md:col-span-4">
+            <div className="font-mono text-[10px] tracking-[0.2em] text-slate-500">COMMAND MODULES</div>
+            {MODULES.map((item) => (
+              <button key={item.id} type="button" onClick={() => { if (activeModule !== item.id) setFormError(''); setActiveModule(item.id) }} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${activeModule === item.id ? (isDark ? 'border-cyan-500 bg-slate-900' : 'border-cyan-500 bg-white') : (isDark ? 'border-white/5 bg-slate-900/50' : 'border-slate-300 bg-white')}`}>
+                <item.icon className={`h-5 w-5 ${activeModule === item.id ? 'text-cyan-500' : 'text-slate-400'}`} />
+                <span>
+                  <span className={`block text-sm font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{item.title}</span>
+                  <span className="font-mono text-[9px] tracking-widest text-slate-500">{item.subtitle}</span>
+                </span>
               </button>
-            </div>
+            ))}
+            <button type="button" onClick={() => { if (activeModule !== 'utilities') setFormError(''); setActiveModule('utilities') }} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${activeModule === 'utilities' ? (isDark ? 'border-purple-500 bg-slate-900' : 'border-purple-500 bg-white') : (isDark ? 'border-white/5 bg-slate-900/50' : 'border-slate-300 bg-white')}`}>
+              <Settings className={`h-5 w-5 ${activeModule === 'utilities' ? 'text-purple-500' : 'text-slate-400'}`} />
+              <span>
+                <span className="block text-sm font-bold">Utilities</span>
+                <span className="font-mono text-[9px] tracking-widest text-slate-500">LEDGER, CONTACTS, ALLOWANCE</span>
+              </span>
+            </button>
           </div>
-                    <div className="md:col-span-8 space-y-6 flex flex-col">
-            <section className={`border rounded-2xl p-6 transition-colors flex-grow ${bgCard}`}>
-              
-              {activeModule === 'ai_batch' && (
-                <div className="space-y-4 animate-fade-in">
-                  <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Bot className="text-cyan-500"/> AI Batch Delegate</h3>
-                  <p className={`text-sm ${textMuted}`}>Command the AI to execute transactions across different assets simultaneously.</p>
-                  <div className={`p-4 rounded-xl border flex flex-col gap-3 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
+
+          <div className="space-y-6 md:col-span-8">
+            <section className={`rounded-2xl border p-6 ${cardClass}`}>
+              {formError && <p role="alert" className="mb-4 font-mono text-xs text-rose-400">{formError}</p>}
+
+              {activeModule === 'payments' && (
+                <div className="space-y-4">
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><ArrowRight className="text-cyan-500" /> Batch payments</h2>
+                  <p className="text-sm text-slate-500">Enter the recipient and the amount. Send Guard checks the address before the transfer. Gas is paid in USDC.</p>
+                  <Field label="Recipient address">
                     <div className="flex gap-2">
-                      <input type="text" value={aiCommand} onChange={(e) => setAiCommand(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAiCommand()} placeholder={`Try: "Send 1 ${nativeSymbol} to 0x..."`} className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${isDark ? 'text-white' : 'text-slate-900'}`} />
-                      <button onClick={handleAiCommand} disabled={isAiProcessing || !aiCommand} className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white font-bold rounded-lg disabled:opacity-50"><ArrowRight className="w-4 h-4" /></button>
+                      <input
+                        value={payAddress}
+                        onChange={(event) => setPayAddress(event.target.value)}
+                        onFocus={() => setPayFieldFocus(true)}
+                        onBlur={() => setPayFieldFocus(false)}
+                        placeholder="0x or a contact name"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className={inputClass}
+                      />
+                      <button
+                        type="button"
+                        disabled={shownContacts.length === 0}
+                        onClick={() => setPayContactOpen((open) => !open)}
+                        className={`shrink-0 rounded-lg border px-3 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                      >
+                        Select contact
+                      </button>
                     </div>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to `)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-cyan-400 hover:bg-cyan-500/10' : 'bg-slate-200 border-slate-300 text-cyan-700'}`}>💡 Fast Send</button>
-                      <button onClick={() => setAiCommand(`Send 1 ${nativeSymbol} to 0x..., Send 2 ${nativeSymbol} to 0x...`)} className={`text-[10px] font-mono px-3 py-1.5 rounded-full border ${isDark ? 'bg-slate-900 border-white/10 text-purple-400 hover:bg-purple-500/10' : 'bg-slate-200 border-slate-300 text-purple-700'}`}>🚀 Multi-Wallet Batch</button>
+                    {matchedPayContact && (
+                      <span className="mt-1 block font-mono text-[10px] text-slate-500">{matchedPayContact.name}</span>
+                    )}
+                  </Field>
+                  <ContactMenu
+                    contacts={shownContacts}
+                    query={payAddress}
+                    open={showPayContacts}
+                    onPick={usePayContact}
+                    isDark={isDark}
+                  />
+                  <Field label="Amount">
+                    <input value={payAmount} onChange={(event) => setPayAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className={inputClass} />
+                  </Field>
+                  {guardPhase === 'blocked' && (
+                    <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+                      {!walletAddress && 'Connect a wallet on Arc before Send Guard can check this recipient.'}
+                      {walletAddress && !dataReady && 'Wallet data is still loading.'}
+                      {walletAddress && dataReady && !arc && 'Switch to Arc before Send Guard can check this recipient.'}
+                    </p>
+                  )}
+                  {guardPhase === 'checking' && (
+                    <p role="status" className={`rounded-xl border p-3 font-mono text-xs ${isDark ? 'border-cyan-500/30 text-cyan-200' : 'border-cyan-600/30 text-cyan-800'}`}>
+                      Checking recipient…
+                    </p>
+                  )}
+                  {guardPhase === 'error' && (
+                    <div className="space-y-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3">
+                      <p role="alert" className="font-mono text-xs text-rose-300">{guardResult.error}</p>
+                      <button type="button" onClick={() => setGuardNonce((value) => value + 1)} className="w-full rounded-lg border border-rose-400/40 py-2 text-xs font-bold text-rose-200">Check again</button>
                     </div>
+                  )}
+                  {guardReport && (
+                    <div
+                      role="status"
+                      className={`space-y-2 rounded-xl border p-3 ${
+                        guardReport.level === 'known'
+                          ? (isDark ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-emerald-600/40 bg-emerald-50')
+                          : guardReport.level === 'new'
+                            ? (isDark ? 'border-amber-500/40 bg-amber-500/10' : 'border-amber-600/40 bg-amber-50')
+                            : (isDark ? 'border-rose-500/50 bg-rose-500/10' : 'border-rose-600/40 bg-rose-50')
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                          guardReport.level === 'known' ? 'bg-emerald-400' : guardReport.level === 'new' ? 'bg-amber-400' : 'bg-rose-500'
+                        }`} />
+                        <span className="font-mono text-[10px] tracking-widest text-slate-400">SEND GUARD</span>
+                      </div>
+                      <div className={`text-sm font-bold ${
+                        guardReport.level === 'known'
+                          ? (isDark ? 'text-emerald-300' : 'text-emerald-800')
+                          : guardReport.level === 'new'
+                            ? (isDark ? 'text-amber-200' : 'text-amber-900')
+                            : (isDark ? 'text-rose-200' : 'text-rose-800')
+                      }`}>
+                        {guardReport.level === 'known' && 'Known standard wallet'}
+                        {guardReport.level === 'new' && 'New standard wallet'}
+                        {guardReport.level === 'contract' && 'Smart contract address'}
+                      </div>
+                      <p className={`text-xs ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                        {guardReport.level === 'known' && 'This address is a wallet and it is already in your ledger.'}
+                        {guardReport.level === 'new' && 'First-time interaction. This address is a wallet and it is not in your ledger.'}
+                        {guardReport.level === 'contract' && 'Sending tokens directly to a contract can lose them if the contract cannot receive that token.'}
+                      </p>
+                      {guardReport.level !== 'known' && !guardCleared && (
+                        <button
+                          type="button"
+                          disabled={isPaying}
+                          onClick={() => setGuardAck(guardAckKey(guardReport))}
+                          className={`w-full rounded-lg py-2 text-xs font-bold disabled:opacity-50 ${
+                            guardReport.level === 'contract' ? 'bg-rose-500 text-white' : 'bg-amber-400 text-slate-950'
+                          }`}
+                        >
+                          Acknowledge & Proceed
+                        </button>
+                      )}
+                      {guardReport.level !== 'known' && guardCleared && (
+                        <p className={`font-mono text-[10px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Acknowledged. Choose Send USDC or Send EURC.</p>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button type="button" disabled={isPaying || !guardCleared} onClick={() => sendPayment('usdc')} className="rounded-lg bg-cyan-500 py-3 font-bold text-slate-950 disabled:opacity-50">Send USDC</button>
+                    <button type="button" disabled={isPaying || !guardCleared} onClick={() => sendPayment('eurc')} className="rounded-lg bg-indigo-500 py-3 font-bold text-white disabled:opacity-50">Send EURC</button>
                   </div>
                 </div>
               )}
 
               {activeModule === 'payroll' && (
-                <div className="space-y-4 animate-fade-in">
-                  <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Users className="text-indigo-500"/> Token Airdrop & Payroll</h3>
-                  <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <div className="flex gap-4">
-                      <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>GLOBAL AMOUNT</label><input type="number" step="0.01" value={globalAmount} onChange={e=>setGlobalAmount(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono focus:outline-none ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                      <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SELECT TOKEN</label>
-                        <div className="flex gap-2">
-                          <button onClick={() => setPayrollToken('NATIVE')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'NATIVE' ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>{nativeSymbol}</button>
-                          {currentChainId === '0x4cef52' && <button onClick={() => setPayrollToken('EURC')} className={`flex-1 py-2 rounded-lg font-bold font-mono text-xs border ${payrollToken === 'EURC' ? 'bg-fuchsia-500/20 border-fuchsia-500 text-fuchsia-400' : 'bg-slate-900 border-white/5 text-slate-500'}`}>EURC</button>}
-                        </div>
-                      </div>
-                    </div>
-                    <textarea value={payrollText} onChange={e=>setPayrollText(e.target.value)} placeholder={"0x111a...\n0x2222..."} rows="4" className={`w-full bg-transparent border rounded-lg p-3 text-sm font-mono focus:outline-none ${isDark ? 'text-white border-white/10 bg-slate-900' : 'text-slate-900 border-slate-300 bg-white'}`}/>
-                    <button onClick={handlePayrollCommand} disabled={isPayrollProcessing || !payrollText} className="w-full py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-bold rounded-lg flex items-center justify-center gap-2"><Zap className="w-4 h-4"/> EXECUTE AIRDROP</button>
+                <div className="space-y-4">
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><Users className="text-indigo-400" /> Payroll</h2>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="AMOUNT WHEN A LINE OMITS ONE">
+                      <input value={globalAmount} onChange={(event) => setGlobalAmount(event.target.value)} inputMode="decimal" className={inputClass} />
+                    </Field>
+                    <Field label="ASSET">
+                      <select value={payrollAsset} onChange={(event) => setPayrollAsset(event.target.value)} className={inputClass}>
+                        <option value="usdc">USDC</option>
+                        <option value="eurc">EURC</option>
+                      </select>
+                    </Field>
                   </div>
-                </div>
-              )}
-
-              {activeModule === 'automation' && (
-                <div className="space-y-4 animate-fade-in">
-                  <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Clock className="text-orange-500"/> Agentic Automation</h3>
-                  <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>AMOUNT</label><input type="number" value={autoAmount} onChange={e=>setAutoAmount(e.target.value)} placeholder="1.0" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                      <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TOKEN</label><select value={autoToken} onChange={e=>setAutoToken(e.target.value)} className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}><option value="NATIVE">{nativeSymbol}</option>{currentChainId === '0x4cef52' && <option value="EURC">EURC</option>}</select></div>
-                    </div>
-                    <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TARGET ADDRESS</label><input type="text" value={autoAddress} onChange={e=>setAutoAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                    <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>DELAY (MINUTES)</label><input type="number" value={autoTime} onChange={e=>setAutoTime(e.target.value)} placeholder="1" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                    <button onClick={handleScheduleTask} disabled={!autoAddress || !autoAmount} className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-lg">SET AGENT TRIGGER</button>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[10px] text-slate-500">RECIPIENTS</span>
+                    <button
+                      type="button"
+                      disabled={shownContacts.length === 0}
+                      onClick={() => setPayrollContactOpen((open) => !open)}
+                      className={`rounded-lg border px-3 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                    >
+                      Select contact
+                    </button>
                   </div>
-                  {activeTasks.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                      <div className={`text-[10px] font-mono tracking-widest ${textMuted}`}>ACTIVE TASKS</div>
-                      {activeTasks.map(t => (
-                        <div key={t.id} className="p-3 border border-orange-500/30 bg-orange-500/10 rounded-lg flex justify-between text-xs font-mono text-orange-400"><span>Send {t.amount} {t.token} in {t.time}m</span><span className="font-bold">{t.status}</span></div>
+                  <ContactMenu contacts={shownContacts} query="" open={payrollContactOpen} onPick={usePayrollContact} isDark={isDark} />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => payrollFileRef.current?.click()}
+                      className={`rounded-lg border px-3 py-1 text-[10px] font-bold ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                    >
+                      Upload CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadPayrollSample}
+                      className={`rounded-lg border px-3 py-1 text-[10px] font-bold ${isDark ? 'border-white/10 text-slate-300' : 'border-slate-300 text-slate-700'}`}
+                    >
+                      Download sample CSV
+                    </button>
+                    <input
+                      ref={payrollFileRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="hidden"
+                      onChange={readPayrollCsv}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500">Each row needs an address or an exact contact name, then an amount. A header such as address,amount is optional.</p>
+                  {payrollCsvSummary && (
+                    <p role="status" className={`rounded-xl border p-3 text-xs ${isDark ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-emerald-600/40 bg-emerald-50 text-emerald-900'}`}>
+                      {payrollCsvSummary}
+                    </p>
+                  )}
+                  {payrollCsvErrors.length > 0 && (
+                    <div role="alert" className={`space-y-1 rounded-xl border p-3 ${isDark ? 'border-rose-500/40 bg-rose-500/10' : 'border-rose-600/40 bg-rose-50'}`}>
+                      <p className={`text-xs font-bold ${isDark ? 'text-rose-200' : 'text-rose-800'}`}>The CSV was not applied. Fix these rows and upload it again.</p>
+                      {payrollCsvErrors.slice(0, 8).map((message) => (
+                        <p key={message} className={`font-mono text-[11px] ${isDark ? 'text-rose-200' : 'text-rose-800'}`}>{message}</p>
                       ))}
+                      {payrollCsvErrors.length > 8 && (
+                        <p className={`font-mono text-[11px] ${isDark ? 'text-rose-200' : 'text-rose-800'}`}>{payrollCsvErrors.length - 8} more rows need a fix.</p>
+                      )}
                     </div>
                   )}
+                  <textarea
+                    value={payrollText}
+                    onChange={(event) => {
+                      setPayrollText(event.target.value)
+                      setPayrollCsvErrors([])
+                      setPayrollCsvSummary('')
+                    }}
+                    rows={5}
+                    placeholder={'0x… 1.5\n0x…'}
+                    className={inputClass}
+                  />
+                  {payrollPreview && <p className="font-mono text-[11px] text-slate-400">{payrollPreview}</p>}
+                  <button type="button" disabled={isPayroll || !payrollText.trim()} onClick={() => runAction(setIsPayroll, async () => {
+                    const ready = requireReady()
+                    const account = addressRef.current
+                    const rows = parsePayrollList(payrollText, globalAmount)
+                    const transfers = rows.map((row) => ({
+                      asset: payrollAsset,
+                      to: row.to,
+                      amount: parseAmount(row.amountText, 6),
+                    }))
+                    let result
+                    try {
+                      result = await sendTransfers({
+                        eip1193: providerRef.current,
+                        transfers,
+                        expectedChainId: ready.network.chainId,
+                      })
+                    } catch (error) {
+                      await noteReverted(error, transfers, account, ready.network.chainId)
+                      throw error
+                    }
+                    await safeRemember(transferRows(result, 'confirmed'), account)
+                    setPayrollText('')
+                    setPayrollCsvErrors([])
+                    setPayrollCsvSummary('')
+                    assertSameWallet(account, result.hash)
+                    pushLog(`Payroll confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
+                    celebrate()
+                    await refresh()
+                  })} className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-500 py-3 font-bold text-white disabled:opacity-50">
+                    <Zap className="h-4 w-4" /> Send payroll
+                  </button>
                 </div>
               )}
 
-              {activeModule === 'pager' && (
-                <div className="space-y-4 animate-fade-in">
-                  <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><MessageSquare className="text-fuchsia-500"/> On-Chain Pager</h3>
-                  <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>RECIPIENT ADDRESS</label><input type="text" value={pagerAddress} onChange={e=>setPagerAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                    <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SECURE MESSAGE</label><textarea value={pagerMessage} onChange={e=>setPagerMessage(e.target.value)} placeholder="Type secret message..." rows="3" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                    <button onClick={handleSendPager} disabled={isPagerSending || !pagerAddress || !pagerMessage} className="w-full py-3 bg-fuchsia-500 hover:bg-fuchsia-600 text-white font-bold rounded-lg flex items-center justify-center gap-2"><Zap className="w-4 h-4"/> TRANSMIT ON-CHAIN</button>
+              {activeModule === 'schedule' && (
+                <div className="space-y-4">
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><Clock className="text-orange-400" /> Scheduled payments</h2>
+                  <p className="text-sm text-slate-500">The timer only marks a payment ready. Nothing is signed until you press send, including after a reload.</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="AMOUNT"><input value={autoAmount} onChange={(event) => setAutoAmount(event.target.value)} inputMode="decimal" className={inputClass} /></Field>
+                    <Field label="ASSET">
+                      <select value={autoAsset} onChange={(event) => setAutoAsset(event.target.value)} className={inputClass}>
+                        <option value="usdc">USDC</option>
+                        <option value="eurc">EURC</option>
+                      </select>
+                    </Field>
                   </div>
+                  <Field label="RECIPIENT"><input value={autoAddress} onChange={(event) => setAutoAddress(event.target.value)} className={inputClass} /></Field>
+                  <Field label="DELAY IN MINUTES"><input value={autoTime} onChange={(event) => setAutoTime(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+                  <button type="button" onClick={() => runAction(setIsPaying, async () => {
+                    const ready = requireReady()
+                    let current = tasksRef.current.slice()
+                    const open = current.filter((task) => ['pending', 'ready', 'submitting', 'unknown'].includes(task.status))
+                    if (open.length >= TASK_LIMIT) throw toUserError(new Error('There are already 20 open tasks.'))
+                    while (current.length >= TASK_LIMIT) {
+                      const index = current.findIndex((task) => task.status === 'completed' || task.status === 'cancelled')
+                      if (index === -1) throw toUserError(new Error('There are already 20 saved tasks. Cancel a finished task before adding another.'))
+                      current.splice(index, 1)
+                    }
+                    const minutes = assertDelayMinutes(autoTime)
+                    const amount = parseAmount(autoAmount, 6)
+                    if (amount <= 0n) throw toUserError(new Error('Amount must be greater than zero.'))
+                    const to = assertAddress(autoAddress, 'Recipient')
+                    if (to === addressRef.current) throw toUserError(new Error('Recipient is the connected wallet.'))
+                    const task = {
+                      id: createId(),
+                      address: to,
+                      amount: formatToken(amount, 6, 6),
+                      asset: autoAsset,
+                      delayMinutes: minutes,
+                      status: 'pending',
+                      triggerAt: Date.now() + minutes * 60_000,
+                      chainId: ready.network.chainId,
+                      error: '',
+                    }
+                    commitTasks([...current, task])
+                    armTimer(task)
+                    setAutoAddress('')
+                    setAutoAmount('')
+                    pushLog(`Task queued for ${ready.network.name}. It will wait for your signature.`, 'process')
+                  })} disabled={isPaying} className="w-full rounded-lg bg-orange-500 py-3 font-bold text-white disabled:opacity-50">
+                    Queue payment
+                  </button>
+                  <div className="space-y-2">
+                    {tasks.map((task) => (
+                      <div key={task.id} className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 font-mono text-xs text-orange-300">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Send {task.amount} {assetLabel(task.asset)} to {shortAddress(task.address)}</span>
+                          <span>{task.status}</span>
+                        </div>
+                        {task.error && <p className="mt-1 text-rose-300">{task.error}</p>}
+                        <div className="mt-2 flex gap-2">
+                          {['ready', 'unknown', 'failed'].includes(task.status) && (
+                            <button type="button" disabled={isPaying} onClick={() => runAction(setIsPaying, () => executeTask(task))} className="rounded bg-orange-500 px-2 py-1 text-white disabled:opacity-50">
+                              {task.status === 'unknown' ? 'Send anyway' : 'Sign and send'}
+                            </button>
+                          )}
+                          {['pending', 'ready', 'unknown', 'failed'].includes(task.status) && (
+                            <button type="button" disabled={isPaying} onClick={() => {
+                              if (actionLockRef.current || inFlightRef.current.has(task.id) || !dataReadyRef.current) return
+                              const handle = timersRef.current.get(task.id)
+                              if (handle) clearTimeout(handle)
+                              timersRef.current.delete(task.id)
+                              commitTasks(tasksRef.current.map((item) => item.id === task.id ? { ...item, status: 'cancelled' } : item))
+                            }} className="rounded border border-orange-500/40 px-2 py-1 disabled:opacity-50">
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {activeModule === 'memo' && (
+                <div className="space-y-4">
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><MessageSquare className="text-fuchsia-400" /> On-chain memo</h2>
+                  <p className="text-sm text-slate-500">The text is public. It is attached to a zero-value USDC transfer through Arc’s Memo contract, and the only USDC spent is gas.</p>
+                  <Field label="RECIPIENT"><input value={pagerAddress} onChange={(event) => setPagerAddress(event.target.value)} className={inputClass} /></Field>
+                  <Field label="MESSAGE"><textarea value={pagerMessage} onChange={(event) => setPagerMessage(event.target.value)} maxLength={256} rows={3} className={inputClass} /></Field>
+                  <button type="button" disabled={isPaging || !pagerAddress || !pagerMessage.trim()} onClick={() => runAction(setIsPaging, async () => {
+                    const ready = requireReady()
+                    const account = addressRef.current
+                    const message = assertMemo(pagerMessage)
+                    const recipient = assertAddress(pagerAddress, 'Recipient')
+                    let result
+                    try {
+                      result = await sendMemo({
+                        eip1193: providerRef.current,
+                        recipient,
+                        message,
+                        expectedChainId: ready.network.chainId,
+                      })
+                    } catch (error) {
+                      const wrapped = toUserError(error)
+                      if (wrapped.code === 'REVERTED' && wrapped.hash) {
+                        await safeRemember([{
+                          id: createId(),
+                          hash: wrapped.hash,
+                          amount: '0',
+                          token: 'USDC',
+                          to: recipient,
+                          time: receiptStamp(),
+                          status: 'reverted',
+                          chainId: wrapped.chainId ?? ready.network.chainId,
+                        }], account)
+                      }
+                      throw error
+                    }
+                    await safeRemember([{
+                      id: createId(),
+                      hash: result.hash,
+                      amount: '0',
+                      token: 'USDC',
+                      to: recipient,
+                      time: receiptStamp(),
+                      status: 'confirmed',
+                      chainId: result.chainId,
+                    }], account)
+                    setPagerMessage('')
+                    assertSameWallet(account, result.hash)
+                    pushLog(`Memo confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
+                    celebrate()
+                    await refresh()
+                  })} className="w-full rounded-lg bg-fuchsia-500 py-3 font-bold text-white disabled:opacity-50">
+                    Publish memo
+                  </button>
                 </div>
               )}
 
               {activeModule === 'utilities' && (
-                <div className="space-y-6 animate-fade-in">
-                  <h3 className={`text-xl font-bold flex items-center gap-2 ${isDark?'text-white':'text-slate-900'}`}><Settings className="text-purple-500"/> System Utilities</h3>
-                  <div className={`flex gap-2 p-1 rounded-lg border ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-100 border-slate-300'}`}>
-                    <button onClick={()=>setActiveUtilityTab('ledger')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='ledger'?'bg-purple-500 text-white':'text-slate-500'}`}><History className="w-4 h-4 inline mr-1"/> Ledger</button>
-                    {currentChainId === '0x4cef52' && <button onClick={()=>setActiveUtilityTab('security')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='security'?'bg-purple-500 text-white':'text-slate-500'}`}><Shield className="w-4 h-4 inline mr-1"/> Revoke</button>}
-                    {currentChainId === '0x4cef52' && <button onClick={()=>setActiveUtilityTab('forge')} className={`flex-1 py-2 text-xs font-bold rounded ${activeUtilityTab==='forge'?'bg-purple-500 text-white':'text-slate-500'}`}><Layers className="w-4 h-4 inline mr-1"/> Forge</button>}
+                <div className="space-y-4">
+                  <h2 className="flex items-center gap-2 text-xl font-bold"><Settings className="text-purple-400" /> Utilities</h2>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button type="button" onClick={() => { if (utilityTab !== 'ledger') setFormError(''); setUtilityTab('ledger') }} className={`rounded py-2 text-xs font-bold ${utilityTab === 'ledger' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}><History className="mr-1 inline h-4 w-4" />Ledger</button>
+                    <button type="button" onClick={() => { if (utilityTab !== 'contacts') setFormError(''); setUtilityTab('contacts') }} className={`rounded py-2 text-xs font-bold ${utilityTab === 'contacts' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}><Contact className="mr-1 inline h-4 w-4" />Contacts</button>
+                    <button type="button" onClick={() => { if (utilityTab !== 'allowance') setFormError(''); setUtilityTab('allowance') }} className={`rounded py-2 text-xs font-bold ${utilityTab === 'allowance' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}><Shield className="mr-1 inline h-4 w-4" />Allowance</button>
+                    <button type="button" onClick={() => { if (utilityTab !== 'token') setFormError(''); setUtilityTab('token') }} className={`rounded py-2 text-xs font-bold ${utilityTab === 'token' ? 'bg-purple-500 text-white' : 'text-slate-500'}`}><Layers className="mr-1 inline h-4 w-4" />Token</button>
                   </div>
-                  
-                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-slate-950 border-white/10' : 'bg-slate-50 border-slate-300'}`}>
-                    {activeUtilityTab === 'ledger' && (
-                      txHistory.length > 0 ? (
-                        <div className="space-y-2">
-                          <div className="flex justify-end"><button onClick={() => { setTxHistory([]); saveData('txHistory', []); }} className="text-[10px] text-rose-400 border border-rose-500/20 px-2 py-1 rounded">Clear History</button></div>
-                          {txHistory.map(tx => (
-                            <div key={tx.id} className="p-3 border border-emerald-500/20 bg-emerald-500/5 rounded-lg flex justify-between items-center text-xs font-mono">
-                              <div>
-                                <div className="font-bold text-white">Sent {tx.amount} {tx.token}</div>
-                                <div className="text-[10px] text-slate-500">To: {tx.to.substring(0,8)}...</div>
+
+                  {utilityTab === 'ledger' && (
+                    <div className="space-y-2">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          disabled={!dataReady || isExporting}
+                          onClick={exportLedger}
+                          className={`rounded border px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                        >
+                          {isExporting ? 'Exporting…' : 'Export CSV'}
+                        </button>
+                        {txHistory.length > 0 && (
+                          <button type="button" onClick={() => {
+                            if (!dataReadyRef.current) return
+                            if (!window.confirm('Remove saved receipts from this browser?')) return
+                            commitHistory([])
+                          }} className="rounded border border-rose-500/30 px-2 py-1 text-[10px] text-rose-400">Clear history</button>
+                        )}
+                      </div>
+                      {txHistory.length === 0 && <p className="py-4 text-center text-xs text-slate-500">No saved receipts.</p>}
+                      {txHistory.map((tx) => {
+                        const network = getArcNetwork(tx.chainId)
+                        return (
+                          <div key={tx.id} className="flex items-center justify-between rounded-lg border border-white/10 p-3 font-mono text-xs">
+                            <div>
+                              <div>{tx.status === 'confirmed' ? 'Sent' : 'Reverted'} {tx.amount} {tx.token}</div>
+                              <div className="text-slate-500">{shortAddress(tx.to)} · {formatLedgerWhen(tx.time)}</div>
+                            </div>
+                            {network && (
+                              <a href={`${network.explorer}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">View</a>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {utilityTab === 'contacts' && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-slate-500">Save named addresses for this wallet. Batch payments and Payroll can pick them. Names stay in this browser.</p>
+                      {!walletAddress && <p className="py-4 text-center text-xs text-slate-500">Connect a wallet to save contacts.</p>}
+                      {walletAddress && !dataReady && <p role="status" className="py-4 text-center text-xs text-slate-500">Wallet data is still loading.</p>}
+                      {dataReady && (
+                        <>
+                          {contactError && <p role="alert" className="font-mono text-xs text-rose-400">{contactError}</p>}
+                          <Field label="Name">
+                            <input
+                              value={contactName}
+                              onChange={(event) => setContactName(event.target.value)}
+                              placeholder="Office Rent"
+                              autoComplete="off"
+                              className={inputClass}
+                            />
+                          </Field>
+                          <Field label="Address">
+                            <input
+                              value={contactAddress}
+                              onChange={(event) => setContactAddress(event.target.value)}
+                              placeholder="0x"
+                              autoComplete="off"
+                              spellCheck={false}
+                              className={inputClass}
+                            />
+                          </Field>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={isSavingContact || !contactName.trim() || !contactAddress.trim()}
+                              onClick={submitContact}
+                              className="flex-1 rounded-lg bg-purple-500 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            >
+                              {isSavingContact ? 'Saving…' : editingContactId ? 'Save changes' : 'Save contact'}
+                            </button>
+                            {editingContactId && (
+                              <button
+                                type="button"
+                                disabled={isSavingContact}
+                                onClick={() => { setEditingContactId(''); setContactName(''); setContactAddress('') }}
+                                className={`rounded-lg border px-3 text-xs font-bold disabled:opacity-50 ${isDark ? 'border-white/10 text-slate-300' : 'border-slate-300 text-slate-700'}`}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                          {shownContacts.length === 0 && <p className="py-4 text-center text-xs text-slate-500">No saved contacts.</p>}
+                          {shownContacts.map((contact) => (
+                            <div key={contact.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                              <div className="min-w-0">
+                                <div className="text-sm font-bold">{contact.name}</div>
+                                <div className="break-all font-mono text-[10px] text-slate-500">{contact.address}</div>
                               </div>
-                              <div className="flex flex-col items-end gap-1">
-                                <span className="text-emerald-400">Success ✓</span>
-                                {tx.hash && tx.hash !== 'null' && (
-                                  <a href={`${activeNetInfo.explorer}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1">
-                                    View ↗
-                                  </a>
-                                )}
+                              <div className="flex shrink-0 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isSavingContact}
+                                  onClick={() => { setEditingContactId(contact.id); setContactName(contact.name); setContactAddress(contact.address) }}
+                                  className={`rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSavingContact}
+                                  onClick={() => deleteContact(contact)}
+                                  className={`rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-rose-500/40 text-rose-300' : 'border-rose-500/40 text-rose-700'}`}
+                                >
+                                  Delete
+                                </button>
                               </div>
                             </div>
                           ))}
-                        </div>
-                      ) : <div className="text-xs text-slate-500 text-center py-4">No recent transaction receipts.</div>
-                    )}
-                    
-                    {activeUtilityTab === 'security' && currentChainId === '0x4cef52' && (
-                      <div className="space-y-4">
-                        <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SPENDER ADDRESS TO SCAN</label><input type="text" value={spenderAddress} onChange={e=>setSpenderAddress(e.target.value)} placeholder="0x..." className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                        <div className="flex gap-2">
-                          <button onClick={checkAllowance} disabled={isChecking || !spenderAddress} className="flex-1 py-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg font-bold text-xs">SCAN ALLOWANCE</button>
-                          {currentAllowance !== null && parseFloat(currentAllowance) > 0 && (
-                            <button onClick={revokeAllowance} disabled={isChecking} className="flex-1 py-2.5 bg-rose-500 text-white rounded-lg font-bold text-xs">REVOKE ACCESS</button>
-                          )}
-                        </div>
-                        {currentAllowance !== null && (<div className={`p-3 rounded-lg border text-xs font-mono text-center ${parseFloat(currentAllowance) > 0 ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>Current Allowance: {currentAllowance} EURC</div>)}
-                      </div>
-                    )}
+                        </>
+                      )}
+                    </div>
+                  )}
 
-                    {activeUtilityTab === 'forge' && currentChainId === '0x4cef52' && (
-                      <div className="space-y-4">
-                        <div className="flex gap-2">
-                          <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>NAME</label><input type="text" value={forgeName} onChange={e=>setForgeName(e.target.value)} placeholder="e.g. Nexoria Coin" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                          <div className="flex-1"><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>SYMBOL</label><input type="text" value={forgeSymbol} onChange={e=>setForgeSymbol(e.target.value)} placeholder="e.g. NXC" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                        </div>
-                        <div><label className={`block text-[10px] font-mono mb-1 ${textMuted}`}>TOTAL SUPPLY</label><input type="number" value={forgeSupply} onChange={e=>setForgeSupply(e.target.value)} placeholder="1000000" className={`w-full p-2.5 rounded-lg border text-sm font-mono ${isDark ? 'bg-slate-900 border-white/10 text-white' : 'bg-white border-slate-300'}`}/></div>
-                        <button onClick={handleDeployToken} disabled={isForging || !forgeName || !forgeSymbol || !forgeSupply} className="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold text-sm">DEPLOY SMART CONTRACT</button>
+                  {utilityTab === 'allowance' && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-slate-500">Active USDC and EURC approvals granted by this wallet on Arc Testnet. Revoke sets that allowance back to zero.</p>
+                      <div className="text-right">
+                        <button
+                          type="button"
+                          onClick={() => setAllowanceNonce((value) => value + 1)}
+                          disabled={!allowanceRequestKey || allowancePhase === 'loading' || allowancePhase === 'refreshing' || Boolean(revokingKey)}
+                          className={`rounded border px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-purple-500/30 text-purple-300' : 'border-purple-500/40 text-purple-700'}`}
+                        >
+                          Refresh
+                        </button>
                       </div>
-                    )}
-                  </div>
+                      {allowancePhase === 'idle' && <p className="py-4 text-center text-xs text-slate-500">Connect a wallet to list allowances.</p>}
+                      {allowancePhase === 'waiting' && <p role="status" className="py-4 text-center text-xs text-slate-500">Wallet data is still loading.</p>}
+                      {allowancePhase === 'wrong-network' && (
+                        <p role="status" className="py-4 text-center text-xs text-amber-300">Switch to Arc Testnet to list USDC and EURC allowances.</p>
+                      )}
+                      {(allowancePhase === 'loading' || allowancePhase === 'refreshing') && (
+                        <p role="status" className="py-2 text-center font-mono text-xs text-slate-500">Reading approvals…</p>
+                      )}
+                      {allowancePhase === 'error' && (
+                        <div className="space-y-2">
+                          <p role="alert" className="text-center font-mono text-xs text-rose-400">{allowanceResult.error}</p>
+                          <button type="button" onClick={() => setAllowanceNonce((value) => value + 1)} className="w-full rounded-lg border border-amber-500/40 py-2 text-xs font-bold text-amber-300">Try again</button>
+                        </div>
+                      )}
+                      {allowancePhase === 'ready' && shownAllowances?.length === 0 && (
+                        <p className="py-4 text-center text-xs text-slate-500">No active USDC or EURC approvals.</p>
+                      )}
+                      {Array.isArray(shownAllowances) && shownAllowances.map((row) => {
+                        const key = `${row.asset}:${row.spender}`
+                        const busy = Boolean(revokingKey) || allowancePhase === 'loading' || allowancePhase === 'refreshing'
+                        return (
+                          <div key={key} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                            <div className="min-w-0">
+                              <div className="font-mono text-[10px] tracking-widest text-slate-500">{assetLabel(row.asset)} SPENDER</div>
+                              <div className="break-all font-mono text-xs">{row.spender}</div>
+                              <div className="mt-2 font-mono text-[10px] tracking-widest text-slate-500">APPROVED AMOUNT</div>
+                              <div className={`font-mono text-xs ${isDark ? 'text-cyan-400' : 'text-cyan-700'}`}>{formatAllowance(row.value)} {assetLabel(row.asset)}</div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => revokeListedAllowance(row)}
+                              className="shrink-0 rounded-lg bg-rose-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            >
+                              {revokingKey === key ? 'Revoking…' : 'Revoke'}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {utilityTab === 'token' && (
+                    <div className="space-y-4">
+                      <p className="text-sm text-slate-500">Deploys FixedSupplyToken. The whole supply is minted once to this wallet. There is no admin and no second mint.</p>
+                      {!CAN_DEPLOY_TOKEN && <p className="font-mono text-xs text-amber-300">Bytecode is not built yet. From pulse-app, install solc@0.8.28 and run node ../contracts/compile.mjs.</p>}
+                      <div className="grid grid-cols-2 gap-4">
+                        <Field label="NAME"><input value={forgeName} onChange={(event) => setForgeName(event.target.value)} className={inputClass} /></Field>
+                        <Field label="SYMBOL"><input value={forgeSymbol} onChange={(event) => setForgeSymbol(event.target.value.toUpperCase())} className={inputClass} /></Field>
+                      </div>
+                      <Field label="WHOLE TOKEN SUPPLY"><input value={forgeSupply} onChange={(event) => setForgeSupply(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+                      <button type="button" disabled={isForging || !CAN_DEPLOY_TOKEN} onClick={() => runAction(setIsForging, async () => {
+                        const ready = requireReady()
+                        const account = addressRef.current
+                        const metadata = assertTokenMetadata(forgeName, forgeSymbol)
+                        const wholeSupply = parseWholeSupply(forgeSupply)
+                        const result = await deployFixedSupplyToken({
+                          eip1193: providerRef.current,
+                          ...metadata,
+                          wholeSupply,
+                          expectedChainId: ready.network.chainId,
+                        })
+                        await safeRemember([{
+                          id: createId(),
+                          hash: result.hash,
+                          amount: wholeSupply.toString(),
+                          token: 'TOKEN',
+                          to: result.address,
+                          time: receiptStamp(),
+                          status: 'confirmed',
+                          chainId: result.chainId,
+                        }], account)
+                        setForgeName('')
+                        setForgeSymbol('')
+                        setForgeSupply('')
+                        assertSameWallet(account, result.hash)
+                        pushLog(`Token deployed at ${result.address}.`, 'success')
+                        celebrate()
+                        await refresh()
+                      })} className="w-full rounded-lg bg-purple-600 py-3 font-bold text-white disabled:opacity-50">Deploy token</button>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
 
-            <section className={`border rounded-2xl overflow-hidden shadow-lg ${isDark ? 'bg-black border-cyan-500/30' : 'bg-slate-900 border-slate-800'}`}>
-              <div className="bg-slate-900 p-2 flex items-center gap-2 border-b border-white/10">
-                <Terminal className="w-4 h-4 text-slate-400" />
-                <span className="text-[10px] font-mono text-slate-400 tracking-widest">SYSTEM TERMINAL / LIVE LOGS</span>
+            <section className="overflow-hidden rounded-2xl border border-cyan-500/30 bg-black shadow-lg">
+              <div className="flex items-center gap-2 border-b border-white/10 bg-slate-900 p-2">
+                <Terminal className="h-4 w-4 text-slate-400" />
+                <span className="font-mono text-[10px] tracking-widest text-slate-400">SYSTEM TERMINAL</span>
               </div>
-              <div className="p-4 h-40 overflow-y-auto font-mono text-xs space-y-2">
-                {terminalLogs.length === 0 && <div className="text-slate-600 italic">Waiting for wallet connection...</div>}
-                {terminalLogs.map((log, idx) => {
-                  let cl = 'text-slate-300';
-                  if(log.type==='process') cl='text-cyan-400';
-                  if(log.type==='success') cl='text-emerald-400';
-                  if(log.type==='error') cl='text-rose-400';
-                  if(log.type==='warning') cl='text-amber-400';
-                  return (<div key={idx} className={cl}><span className="text-slate-600">[{log.time}]</span> {log.msg}</div>);
+              <div aria-live="polite" className="h-40 space-y-2 overflow-y-auto p-4 font-mono text-xs">
+                {logs.length === 0 && <div className="text-slate-600">Waiting for a wallet.</div>}
+                {logs.map((entry, index) => {
+                  const color = entry.type === 'success' ? 'text-emerald-400'
+                    : entry.type === 'error' ? 'text-rose-400'
+                      : entry.type === 'warning' ? 'text-amber-400'
+                        : entry.type === 'process' ? 'text-cyan-400'
+                          : 'text-slate-300'
+                  return <div key={`${entry.time}-${index}`} className={color}><span className="text-slate-600">[{entry.time}]</span> {entry.message}</div>
                 })}
                 <div ref={terminalEndRef} />
               </div>
             </section>
-
           </div>
         </div>
       </main>
     </div>
-  );
+  )
 }
