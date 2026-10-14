@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import confetti from 'canvas-confetti'
 import {
-  Activity, ArrowRight, Clock, Contact, Cpu, Droplet, Globe, History, Layers,
+  Activity, ArrowRight, Clock, Contact, Cpu, Download, Droplet, Globe, History, Layers,
   LogOut, MessageSquare, Moon, Settings, Shield, Sun, Terminal, Users, Zap,
 } from 'lucide-react'
 import { assertTokenMetadata, formatToken, parseAmount, parseWholeSupply } from './lib/amounts.js'
@@ -1000,7 +1000,7 @@ export default function App() {
       )}
 
       <header className={`sticky top-0 z-40 border-b backdrop-blur-md ${isDark ? 'border-white/5 bg-slate-950/80' : 'border-slate-300 bg-white/90'}`}>
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4">
+        <div className="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-2">
           <div className="flex items-center gap-3">
             <Cpu className="h-6 w-6 text-cyan-500" />
             <span className={`text-lg font-bold tracking-widest ${isDark ? 'text-white' : 'text-slate-900'}`}>NEXORIA</span>
@@ -1019,7 +1019,15 @@ export default function App() {
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <a
+              href="/nexoria-demo.mp4"
+              download="nexoria-demo.mp4"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] font-bold ${isDark ? 'border-white/10 bg-slate-900 text-slate-300' : 'border-slate-300 bg-white text-slate-700'}`}
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              Download Demo Video
+            </a>
             <div className={`hidden items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[10px] font-bold md:flex ${isDark ? 'border-white/10 bg-slate-900 text-cyan-400' : 'border-slate-300 bg-slate-100 text-cyan-700'}`}>
               <Globe className="h-3 w-3" />
               <span>{arc ? arc.name : 'Not Arc'} | BLK {snapshot?.telemetry?.blockNumber?.toString() ?? '—'}</span>
