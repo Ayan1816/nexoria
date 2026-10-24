@@ -1,46 +1,39 @@
 # Nexoria
 
-Nexoria is a non-custodial financial command suite for businesses that pay in official Arc tokens, including USDC, EURC, USYC, cirBTC, and WETH, plus custom ERC-20s saved in the browser. The connected wallet holds the keys and signs every transfer. Nexoria never takes custody of funds.
+Nexoria is a non-custodial financial command suite for businesses, live on **Arc Mainnet**, with official Arc tokens (USDC, EURC, USYC, cirBTC, and WETH) and custom ERC-20s, and with **Arc Testnet** in the same app. The connected wallet holds the keys and signs every transaction. Nexoria never takes custody of funds.
 
-The production network is **Arc** (mainnet): chain ID `5042` (`0x13b2`), RPC `https://rpc.mainnet.arc.io`, explorer `https://explorer.arc.io`. **Arc Testnet** stays available in the same wallet switcher: chain ID `5042002` (`0x4cef52`), RPC `https://rpc.testnet.arc.io`, explorer `https://explorer.testnet.arc.io`. The Circle faucet is shown only while the wallet is on Arc Testnet. Gas on both networks is USDC. Connecting a wallet does not switch chains.
+**Production**: **Arc Mainnet** (Chain ID: `5042` / `0x13b2`, RPC: `https://rpc.mainnet.arc.io`, Explorer: `https://explorer.arc.io`)  
+**Playground**: **Arc Testnet** (Chain ID: `5042002` / `0x4cef52`, RPC: `https://rpc.testnet.arc.io`, Explorer: `https://explorer.testnet.arc.io`, faucet: [https://faucet.circle.com](https://faucet.circle.com))
 
-## Vision
+The faucet link is shown only while the wallet is on Arc Testnet. Gas on both networks is USDC. Connecting a wallet does not switch chains.
 
-A business should be able to pay a vendor, run payroll, leave a public memo, schedule a payment, and export the receipts without giving a server the private key. Nexoria keeps that workflow in one dark-themed web app:
+## Vision and key upgrades
 
-- Pay one recipient in any official Arc token or a saved custom ERC-20, after a pre-sign check of the address.
-- Pay up to 25 recipients in one payroll transaction, from typed lines, saved contacts, or a CSV.
-- Queue a payment in any supported token and sign it only when it is due.
-- Attach a public on-chain memo.
-- Keep a local ledger and an address book, revoke token allowances, and deploy a fixed-supply token.
+A business should be able to run payroll, leave a public memo, queue scheduled payments, and export ledger receipts without giving a server the private key. Nexoria keeps that workflow in a dark-themed, local-first web app:
 
-## Networks and contracts
+- **EIP-6963 wallet discovery.** Connect through Rabby, Phantom, Nightly, or any injected browser wallet.
+- **Unified gas and asset telemetry.** Native USDC (18 decimals, `eth_getBalance` and gas) and ERC-20 USDC (6 decimals) are one balance. Gas on both networks is USDC.
+- **Multi-token support.** Pay, batch, queue, or run payroll in USDC, EURC, USYC, cirBTC, WETH, and imported or deployed custom ERC-20 tokens. Each token uses its own decimals.
+- **Send Guard.** Contract bytecode, including EIP-7702 code, and local history are checked before a one-to-one payment.
+- **Payroll.** Pay up to 25 recipients in one transaction with `transfer` or `Multicall3From`, including a CSV upload.
+- **Scheduled payments.** Queue a payment for 1 minute to 7 days. It stays on this device until you sign it.
+- **Allowance revoke dashboard.** Find and revoke token approvals on Arc Mainnet and Arc Testnet.
+- **Token deployer.** Deploy a fixed-supply ERC-20 on Arc and use it for payments.
 
-| | Arc | Arc Testnet |
-| --- | --- | --- |
-| Chain ID | `5042` / `0x13b2` | `5042002` / `0x4cef52` |
-| RPC | `https://rpc.mainnet.arc.io` | `https://rpc.testnet.arc.io` |
-| Explorer | `https://explorer.arc.io` | `https://explorer.testnet.arc.io` |
-| Faucet | none | [https://faucet.circle.com](https://faucet.circle.com) |
+## Network and supported token addresses
 
-Official payment tokens were checked with `eth_getCode`, `name()`, `symbol()`, and `decimals()` on both RPCs. Each row is `isOfficial: true`. Gateway wallet and minter contracts are not payment tokens and are not listed.
-
-| Token | Decimals | Arc | Arc Testnet |
+| Asset / Use | Scale | Arc Mainnet | Arc Testnet |
 | --- | --- | --- | --- |
-| USDC | 6 | `0x3600000000000000000000000000000000000000` | `0x3600000000000000000000000000000000000000` |
-| EURC | 6 | `0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1` | `0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a` |
-| USYC | 6 | `0x8a5D989Bbb96929F689B0200f435f53dA42bF490` | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
-| cirBTC | 8 | `0x171A4217b86A807A64eB94757Db6849fb4bDbAA0` | `0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF` |
-| WETH | 18 | `0x128cC466B61f542da60c70e3aA11c10e19B84EDB` | `0x2c4047028a72803939b6fb674D01bC059B5C4961` |
+| **Native USDC** (gas) | 18 decimals | `eth_getBalance` | `eth_getBalance` |
+| **ERC-20 USDC** | 6 decimals | `0x3600000000000000000000000000000000000000` | `0x3600000000000000000000000000000000000000` |
+| **EURC** | 6 decimals | `0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1` | `0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a` |
+| **USYC** | 6 decimals | `0x8a5D989Bbb96929F689B0200f435f53dA42bF490` | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
+| **cirBTC** | 8 decimals | `0x171A4217b86A807A64eB94757Db6849fb4bDbAA0` | `0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF` |
+| **WETH** | 18 decimals | `0x128cC466B61f542da60c70e3aA11c10e19B84EDB` | `0x2c4047028a72803939b6fb674D01bC059B5C4961` |
+| **Memo contract** | public calldata | `0x5294E9927c3306DcBaDb03fe70b92e01cCede505` | `0x5294E9927c3306DcBaDb03fe70b92e01cCede505` |
+| **Multicall3From** | payroll batch | `0x522fAf9A91c41c443c66765030741e4AaCe147D0` | `0x522fAf9A91c41c443c66765030741e4AaCe147D0` |
 
-USDC is the gas token. cirBTC is Circle Wrapped Bitcoin. USYC is US Yield Coin. WETH is the official bridged Wrapped Ether. A token that is not deployed on a network is omitted from that network; today these five are on both.
-
-These contracts are the same on both networks and are not payment tokens:
-
-| Use | Address |
-| --- | --- |
-| Memo | `0x5294E9927c3306DcBaDb03fe70b92e01cCede505` |
-| Multicall3From | `0x522fAf9A91c41c443c66765030741e4AaCe147D0` |
+Each payment-token address was checked with `eth_getCode`, `name()`, `symbol()`, and `decimals()` on both RPCs on 2026-10-24. USYC reads as US Yield Coin, cirBTC as Circle Wrapped Bitcoin, and WETH as Wrapped Ether. USYC, cirBTC, and WETH use a different contract on each network. Memo and Multicall3From are shared and are not payment tokens. Gateway wallet and minter contracts are not payment tokens.
 
 The app does not use the retired `rpc.testnet.arc.network` host. If the wallet does not know the chain, Nexoria adds it with `wallet_addEthereumChain` after `wallet_switchEthereumChain` reports an unknown chain (`4902` or an unrecognized-chain message). Rejecting the switch does not add the chain. Connecting a wallet does not switch networks by itself.
 
