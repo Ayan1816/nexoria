@@ -18,6 +18,14 @@ test('rejects amounts that would round or use float notation', () => {
   assert.throws(() => parseAmount('1,000', 6), /plain decimal/)
 })
 
+test('parses 8-decimal and 18-decimal token amounts', () => {
+  assert.equal(parseAmount('1.12345678', 8), 112_345_678n)
+  assert.throws(() => parseAmount('1.123456789', 8), /decimal places/)
+  assert.equal(parseAmount('1', 18), 10n ** 18n)
+  assert.equal(parseAmount('0.000000000000000001', 18), 1n)
+  assert.throws(() => parseAmount('1', 19), /not supported/)
+})
+
 test('formats native gas wei without floating point', () => {
   assert.equal(formatToken(420_000_000_000_000n, 18, 8), '0.00042')
   assert.equal(formatToken(1_000_000n, 6, 6), '1')

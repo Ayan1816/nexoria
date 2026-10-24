@@ -8,15 +8,17 @@ import {
 } from 'ethers'
 import { ERC20_ABI, MEMO_ABI, MULTICALL3_FROM_ABI } from './abi.js'
 import { assertGasAndValue, bufferedGasLimit, referenceTransferFee, resolveMaxFeePerGas } from './arcGas.js'
-import { MAX_BATCH, MAX_MEMO_BYTES, NATIVE_PER_ERC20_UNIT, USDC_ERC20_DECIMALS } from './constants.js'
+import { MAX_BATCH, MAX_MEMO_BYTES, NATIVE_PER_ERC20_UNIT } from './constants.js'
+import { sanitizeCustomToken } from './customTokens.js'
 import { AppError } from './errors.js'
-import { getArcNetwork, tokenAddress } from './networks.js'
+import { findOfficialToken, getArcNetwork } from './networks.js'
 import { assertAddress } from './parse.js'
 import artifact from '../contracts/FixedSupplyToken.json' with { type: 'json' }
 
 const erc20Interface = new Interface(ERC20_ABI)
 const multicallInterface = new Interface(MULTICALL3_FROM_ABI)
 const memoInterface = new Interface(MEMO_ABI)
+const SYMBOL = /^[A-Za-z][A-Za-z0-9]{0,31}$/
 
 function asProvider(eip1193) {
   if (!eip1193?.request) throw new AppError('Connect a wallet before continuing.')
@@ -56,7 +58,7 @@ export async function readFeeCaps(provider) {
   }
 }
 
-export async function readWalletSnapshot(eip1193) {
+export async function readWalletSnapshot(eip1193, customTokens = []) {
   const provider = asProvider(eip1193)
   const signer = await provider.getSigner()
   const account = (await signer.getAddress()).toLowerCase()
@@ -64,23 +66,34 @@ export async function readWalletSnapshot(eip1193) {
   const arc = getArcNetwork(chainId)
   if (!arc) return { account, chainId, network: null, balances: null, telemetry: null }
 
-  const usdc = new Contract(arc.contracts.usdc, ERC20_ABI, provider)
-  const eurc = new Contract(arc.contracts.eurc, ERC20_ABI, provider)
-  const [consistent, usdcDecimals, eurcBalance, eurcDecimals, fees] = await Promise.all([
-    readConsistentUsdc(provider, account, arc.contracts.usdc),
+  const usdcToken = findOfficialToken(arc, 'usdc')
+  const extras = extraTokens(arc, customTokens)
+  const others = [...arc.tokens.filter((token) => token.id !== 'usdc'), ...extras]
+  const usdc = new Contract(usdcToken.address, ERC20_ABI, provider)
+  const [consistent, usdcDecimals, otherRows, fees] = await Promise.all([
+    readConsistentUsdc(provider, account, usdcToken.address),
     usdc.decimals(),
-    eurc.balanceOf(account),
-    eurc.decimals(),
+    Promise.all(others.map((token) => readListedBalance(provider, account, token))),
     readFeeCaps(provider),
   ])
-  if (Number(usdcDecimals) !== USDC_ERC20_DECIMALS || Number(eurcDecimals) !== USDC_ERC20_DECIMALS) {
-    throw new AppError('USDC or EURC did not report 6 decimals. Balances were not shown, so a payment cannot use the wrong scale.')
+  if (Number(usdcDecimals) !== usdcToken.decimals) {
+    throw new AppError('USDC did not report 6 decimals. Balances were not shown, so a payment cannot use the wrong scale.')
   }
+  const tokens = [
+    { ...usdcToken, balance: consistent.usdcBalance, error: '' },
+    ...otherRows,
+  ]
+  const eurc = tokens.find((token) => token.id === 'eurc')
   return {
     account,
     chainId,
     network: arc,
-    balances: { native: consistent.nativeBalance, usdc: consistent.usdcBalance, eurc: eurcBalance },
+    balances: {
+      native: consistent.nativeBalance,
+      usdc: consistent.usdcBalance,
+      eurc: eurc?.balance ?? null,
+      tokens,
+    },
     telemetry: {
       blockNumber: fees.blockNumber,
       maxFeePerGas: fees.maxFeePerGas,
@@ -90,15 +103,24 @@ export async function readWalletSnapshot(eip1193) {
 }
 
 export function encodePaymentCall(network, transfers) {
-  if (transfers.length === 1) {
-    const transfer = transfers[0]
+  const resolved = transfers.map((transfer) => ({
+    ...transfer,
+    token: paymentToken(network, transfer),
+  }))
+  if (resolved.length === 0) throw new AppError('No payments to send.')
+  const tokenAddress = resolved[0].token.address
+  if (resolved.some((transfer) => transfer.token.address.toLowerCase() !== tokenAddress.toLowerCase())) {
+    throw new AppError('A batch uses one token.')
+  }
+  if (resolved.length === 1) {
+    const transfer = resolved[0]
     return {
-      to: tokenAddress(network, transfer.asset),
+      to: transfer.token.address,
       data: erc20Interface.encodeFunctionData('transfer', [transfer.to, transfer.amount]),
     }
   }
-  const calls = transfers.map((transfer) => ({
-    target: tokenAddress(network, transfer.asset),
+  const calls = resolved.map((transfer) => ({
+    target: transfer.token.address,
     allowFailure: false,
     callData: erc20Interface.encodeFunctionData('transfer', [transfer.to, transfer.amount]),
   }))
@@ -113,17 +135,17 @@ export async function sendTransfers({ eip1193, transfers, expectedChainId }) {
   const signer = await provider.getSigner()
   const account = (await signer.getAddress()).toLowerCase()
   const { chainId, arc } = await requireArc(provider, expectedChainId)
-  const clean = normalizeTransfers(transfers, account)
+  const clean = normalizeTransfers(arc, transfers, account)
   await Promise.all([
-    assertTokenDecimals(provider, arc, clean),
-    assertTransfersAllowed(provider, arc, account, clean),
+    assertTokenDecimals(provider, clean),
+    assertTransfersAllowed(provider, account, clean),
   ])
 
+  const token = clean[0].token
   const { nativeBalance } = await readConsistentUsdc(provider, account, arc.contracts.usdc)
-  const eurcNeeded = clean.some((transfer) => transfer.asset === 'eurc')
-  const eurcBalance = eurcNeeded
-    ? await new Contract(arc.contracts.eurc, ERC20_ABI, provider).balanceOf(account)
-    : 0n
+  const tokenBalance = token.gasToken
+    ? 0n
+    : await new Contract(token.address, ERC20_ABI, provider).balanceOf(account)
 
   const fees = await readFeeCaps(provider)
   const call = encodePaymentCall(arc, clean)
@@ -137,24 +159,16 @@ export async function sendTransfers({ eip1193, transfers, expectedChainId }) {
   })
   const gasLimit = bufferedGasLimit(estimated)
   const feeNative = gasLimit * fees.maxFeePerGas
-  const usdcAmount = sumAsset(clean, 'usdc')
-  const eurcAmount = sumAsset(clean, 'eurc')
   assertGasAndValue({
-    asset: 'usdc',
-    amount: usdcAmount,
-    tokenBalance: 0n,
+    asset: token.gasToken ? 'usdc' : token.id,
+    symbol: token.symbol,
+    decimals: token.decimals,
+    gasToken: token.gasToken,
+    amount: clean.reduce((total, transfer) => total + transfer.amount, 0n),
+    tokenBalance,
     nativeBalance,
     feeNative,
   })
-  if (eurcAmount > 0n) {
-    assertGasAndValue({
-      asset: 'eurc',
-      amount: eurcAmount,
-      tokenBalance: eurcBalance,
-      nativeBalance,
-      feeNative,
-    })
-  }
 
   await assertSameAccount(signer, account)
   const response = await signer.sendTransaction({
@@ -172,6 +186,9 @@ export async function sendTransfers({ eip1193, transfers, expectedChainId }) {
     feeNative,
     transfers: clean.map((transfer) => ({
       asset: transfer.asset,
+      symbol: transfer.token.symbol,
+      decimals: transfer.token.decimals,
+      token: transfer.token.address,
       to: transfer.to,
       amount: transfer.amount.toString(),
     })),
@@ -194,9 +211,10 @@ export async function sendMemo({ eip1193, recipient, message, expectedChainId })
   if (memoData.length === 0 || memoData.length > MAX_MEMO_BYTES) {
     throw new AppError(`Message must be 1 to ${MAX_MEMO_BYTES} bytes.`)
   }
+  const usdc = paymentToken(arc, { asset: 'usdc' })
   await Promise.all([
-    assertTokenDecimals(provider, arc, [{ asset: 'usdc' }]),
-    assertNotBlocked(provider, arc, account, 'usdc', [to]),
+    assertTokenDecimals(provider, [{ token: usdc }]),
+    assertNotBlocked(provider, usdc, account, [to]),
   ])
   const callData = erc20Interface.encodeFunctionData('transfer', [to, 0n])
   const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${account}`
@@ -228,38 +246,38 @@ export async function sendMemo({ eip1193, recipient, message, expectedChainId })
   return { hash: receipt.hash, chainId, feeNative }
 }
 
-export async function readAllowance({ eip1193, asset, spender, expectedChainId }) {
+export async function readAllowance({ eip1193, asset, token, spender, expectedChainId }) {
   const provider = asProvider(eip1193)
   const account = (await (await provider.getSigner()).getAddress()).toLowerCase()
   const { arc } = await requireArc(provider, expectedChainId)
-  if (asset !== 'usdc' && asset !== 'eurc') throw new AppError('Unsupported asset.')
+  const described = paymentToken(arc, { asset, token })
   const spenderAddress = assertAddress(spender, 'Spender')
-  const token = new Contract(tokenAddress(arc, asset), ERC20_ABI, provider)
-  const decimals = await token.decimals()
-  if (Number(decimals) !== USDC_ERC20_DECIMALS) {
-    throw new AppError('Token decimals are not 6. The allowance was not read.')
+  const contract = new Contract(described.address, ERC20_ABI, provider)
+  const decimals = await contract.decimals()
+  if (Number(decimals) !== described.decimals) {
+    throw new AppError(`${described.symbol} reported ${Number(decimals)} decimals, not ${described.decimals}. The allowance was not read.`)
   }
-  const value = await token.allowance(account, spenderAddress)
-  return { value, spender: spenderAddress }
+  const value = await contract.allowance(account, spenderAddress)
+  return { value, spender: spenderAddress, asset: described.id, symbol: described.symbol, decimals: described.decimals }
 }
 
-export async function revokeAllowance({ eip1193, asset, spender, expectedChainId }) {
+export async function revokeAllowance({ eip1193, asset, token, spender, expectedChainId }) {
   const provider = asProvider(eip1193)
   const signer = await provider.getSigner()
   const account = (await signer.getAddress()).toLowerCase()
   const { chainId, arc } = await requireArc(provider, expectedChainId)
-  if (asset !== 'usdc' && asset !== 'eurc') throw new AppError('Unsupported asset.')
+  const described = paymentToken(arc, { asset, token })
   const spenderAddress = assertAddress(spender, 'Spender')
-  const token = new Contract(tokenAddress(arc, asset), ERC20_ABI, signer)
-  await assertNotBlocked(provider, arc, account, asset, [])
-  const current = await token.allowance(account, spenderAddress)
+  const contract = new Contract(described.address, ERC20_ABI, signer)
+  await assertNotBlocked(provider, described, account, [])
+  const current = await contract.allowance(account, spenderAddress)
   if (current === 0n) throw new AppError('Allowance is already zero.')
   const fees = await readFeeCaps(provider)
   const data = erc20Interface.encodeFunctionData('approve', [spenderAddress, 0n])
   const { nativeBalance } = await readConsistentUsdc(provider, account, arc.contracts.usdc)
   const estimated = await provider.estimateGas({
     from: account,
-    to: tokenAddress(arc, asset),
+    to: described.address,
     data,
     value: 0n,
     maxFeePerGas: fees.maxFeePerGas,
@@ -275,7 +293,7 @@ export async function revokeAllowance({ eip1193, asset, spender, expectedChainId
   })
   await assertSameAccount(signer, account)
   const response = await signer.sendTransaction({
-    to: tokenAddress(arc, asset),
+    to: described.address,
     data,
     value: 0n,
     gasLimit,
@@ -360,22 +378,60 @@ function quotedFee(feeData) {
   return price
 }
 
-function normalizeTransfers(transfers, account) {
+export function paymentToken(network, transfer) {
+  const hinted = transfer?.token
+  if (hinted && typeof hinted === 'object' && hinted.address) {
+    const official = findOfficialToken(network, hinted.address)
+    if (official) {
+      if (hinted.decimals != null && Number(hinted.decimals) !== official.decimals) {
+        throw new AppError(`${official.symbol} decimals do not match the Arc token list.`)
+      }
+      return official
+    }
+    const address = assertAddress(hinted.address, 'Token')
+    const decimals = Number(hinted.decimals)
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+      throw new AppError('Token decimals are not supported.')
+    }
+    const symbol = String(hinted.symbol ?? '').trim()
+    if (!SYMBOL.test(symbol)) throw new AppError('Token symbol is missing.')
+    const name = String(hinted.name ?? symbol).trim().slice(0, 64) || symbol
+    return {
+      id: `custom:${address}`,
+      symbol,
+      name,
+      address,
+      decimals,
+      isOfficial: false,
+      gasToken: false,
+    }
+  }
+  const official = findOfficialToken(network, transfer?.asset ?? transfer?.id)
+  if (!official) throw new AppError('Unsupported asset.')
+  return official
+}
+
+function normalizeTransfers(network, transfers, account) {
   if (!Array.isArray(transfers) || transfers.length === 0) throw new AppError('No payments to send.')
   if (transfers.length > MAX_BATCH) throw new AppError(`A batch can include at most ${MAX_BATCH} payments.`)
   const seen = new Set()
-  return transfers.map((transfer) => {
-    if (transfer.asset !== 'usdc' && transfer.asset !== 'eurc') throw new AppError('Unsupported asset.')
+  const clean = transfers.map((transfer) => {
+    const token = paymentToken(network, transfer)
     if (typeof transfer.amount !== 'bigint' || transfer.amount <= 0n) {
       throw new AppError('Amount must be greater than zero.')
     }
     const to = assertAddress(transfer.to, 'Recipient')
     if (to === account) throw new AppError('Recipient is the connected wallet.')
-    const key = `${transfer.asset}:${to}`
+    const key = `${token.address}:${to}`
     if (seen.has(key)) throw new AppError('The batch pays the same address twice for one asset.')
     seen.add(key)
-    return { asset: transfer.asset, to, amount: transfer.amount }
+    return { asset: token.id, to, amount: transfer.amount, token }
   })
+  const tokenAddress = clean[0].token.address.toLowerCase()
+  if (clean.some((transfer) => transfer.token.address.toLowerCase() !== tokenAddress)) {
+    throw new AppError('A batch uses one token.')
+  }
+  return clean
 }
 
 async function waitForReceipt(response, chainId) {
@@ -403,48 +459,46 @@ async function waitForReceipt(response, chainId) {
   return receipt
 }
 
-async function assertNotBlocked(provider, network, account, asset, recipients) {
-  const token = new Contract(tokenAddress(network, asset), ERC20_ABI, provider)
+async function assertNotBlocked(provider, token, account, recipients) {
+  const contract = new Contract(token.address, ERC20_ABI, provider)
   const targets = [account, ...recipients]
   await Promise.all(targets.map(async (target, index) => {
     let flagged
     try {
-      flagged = await token.isBlacklisted(target)
+      flagged = await contract.isBlacklisted(target)
     } catch {
-      // A token that does not expose this view still reverts inside estimateGas.
+      // USYC, WETH, and ordinary ERC-20s do not expose this view. A missing view must not block the send.
       return
     }
     if (flagged) {
       const who = index === 0 ? 'The connected wallet' : `Recipient ${target}`
-      throw new AppError(`${who} is on the ${asset.toUpperCase()} blocklist. The payment was not sent.`, { code: 'BLOCKLIST' })
+      throw new AppError(`${who} is on the ${token.symbol} blocklist. The payment was not sent.`, { code: 'BLOCKLIST' })
     }
   }))
 }
 
-async function assertTransfersAllowed(provider, network, account, transfers) {
-  const byAsset = new Map()
+async function assertTransfersAllowed(provider, account, transfers) {
+  const token = transfers[0]?.token
+  if (!token) return
+  await assertNotBlocked(provider, token, account, transfers.map((transfer) => transfer.to))
+}
+
+async function assertTokenDecimals(provider, transfers) {
+  const tokens = []
+  const seen = new Set()
   for (const transfer of transfers) {
-    const list = byAsset.get(transfer.asset) ?? []
-    list.push(transfer.to)
-    byAsset.set(transfer.asset, list)
+    const token = transfer.token
+    const key = token.address.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    tokens.push(token)
   }
-  await Promise.all([...byAsset].map(([asset, recipients]) => (
-    assertNotBlocked(provider, network, account, asset, recipients)
-  )))
-}
-
-async function assertTokenDecimals(provider, network, transfers) {
-  const assets = [...new Set(transfers.map((transfer) => transfer.asset))]
-  await Promise.all(assets.map(async (asset) => {
-    const decimals = await new Contract(tokenAddress(network, asset), ERC20_ABI, provider).decimals()
-    if (Number(decimals) !== USDC_ERC20_DECIMALS) {
-      throw new AppError(`${asset.toUpperCase()} did not report 6 decimals. The payment was not sent.`)
+  await Promise.all(tokens.map(async (token) => {
+    const decimals = await new Contract(token.address, ERC20_ABI, provider).decimals()
+    if (Number(decimals) !== token.decimals) {
+      throw new AppError(`${token.symbol} reported ${Number(decimals)} decimals, not ${token.decimals}. The payment was not sent.`)
     }
   }))
-}
-
-function sumAsset(transfers, asset) {
-  return transfers.reduce((total, transfer) => (transfer.asset === asset ? total + transfer.amount : total), 0n)
 }
 
 async function readConsistentUsdc(provider, account, usdcAddress) {
@@ -460,6 +514,35 @@ async function readConsistentUsdc(provider, account, usdcAddress) {
     }
   }
   throw new AppError('The USDC contract balance does not match the native balance. The payment was not sent.')
+}
+
+async function readListedBalance(provider, account, token) {
+  try {
+    const contract = new Contract(token.address, ERC20_ABI, provider)
+    const [decimals, balance] = await Promise.all([
+      contract.decimals(),
+      contract.balanceOf(account),
+    ])
+    if (Number(decimals) !== token.decimals || typeof balance !== 'bigint') {
+      return { ...token, balance: null, error: 'scale' }
+    }
+    return { ...token, balance, error: '' }
+  } catch (error) {
+    console.error(error)
+    return { ...token, balance: null, error: 'read' }
+  }
+}
+
+function extraTokens(network, customTokens) {
+  const rows = []
+  const seen = new Set(network.tokens.map((token) => token.address.toLowerCase()))
+  for (const row of Array.isArray(customTokens) ? customTokens : []) {
+    const clean = sanitizeCustomToken(row, network)
+    if (!clean || seen.has(clean.address)) continue
+    seen.add(clean.address)
+    rows.push(clean)
+  }
+  return rows
 }
 
 async function assertSameAccount(signer, account) {

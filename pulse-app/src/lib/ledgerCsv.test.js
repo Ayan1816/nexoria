@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { receiptDate, receiptsToCsv } from './ledgerCsv.js'
+import { ledgerAmount, receiptDate, receiptsToCsv } from './ledgerCsv.js'
 
 const OWNER = '0x1111111111111111111111111111111111111111'
 const RECIPIENT = '0x2222222222222222222222222222222222222222'
@@ -41,6 +41,13 @@ test('quotes unusual receipt fields and keeps a clock-only date as stored', () =
   }])
   assert.match(csv, /"'=1,25","USD""C"/)
   assert.match(csv, new RegExp(RECIPIENT))
+})
+
+test('formats an 8-decimal token amount before it is written to the ledger', () => {
+  assert.equal(ledgerAmount({ amount: 1n, decimals: 8 }), '0.00000001')
+  assert.equal(ledgerAmount({ amount: 10n ** 18n, decimals: 18 }), '1')
+  const csv = receiptsToCsv([{ time: '12:00:00', amount: 12_345_678n, decimals: 8, token: 'cirBTC', to: RECIPIENT }])
+  assert.match(csv, /0\.12345678,cirBTC,/)
 })
 
 test('the ledger tab exports saved receipts', () => {

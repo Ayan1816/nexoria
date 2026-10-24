@@ -1,6 +1,7 @@
 import { parseAmount } from './amounts.js'
 import { HISTORY_LIMIT, MAX_DELAY_MINUTES, TASK_LIMIT } from './constants.js'
 import { AppError } from './errors.js'
+import { NETWORKS } from './networks.js'
 
 const HASH = /^0x[a-fA-F0-9]{64}$/
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/
@@ -108,22 +109,32 @@ function sanitizeHistory(row) {
   }
 }
 
+function officialTaskMeta(id) {
+  for (const network of NETWORKS) {
+    const token = network.tokens.find((item) => item.id === id)
+    if (token) return token
+  }
+  return null
+}
+
+function taskAssetId(row) {
+  if (row.asset === 'eurc' || row.token === 'EURC') return 'eurc'
+  if (row.asset === 'usdc' || row.token === 'NATIVE' || row.token === 'USDC') return 'usdc'
+  if (typeof row.asset === 'string') {
+    const meta = officialTaskMeta(row.asset)
+    if (meta) return meta.id
+  }
+  return ''
+}
+
 function sanitizeTask(row, index) {
   if (!row || typeof row !== 'object') return null
   const address = typeof row.address === 'string' ? row.address : ''
   if (!ADDRESS.test(address)) return null
-  const asset = row.asset === 'eurc' || row.token === 'EURC' ? 'eurc'
-    : row.asset === 'usdc' || row.token === 'NATIVE' || row.token === 'USDC' ? 'usdc'
-      : null
   const status = legacyTaskStatus(row.status)
-  if (!asset || !status) return null
+  if (!status) return null
   const amount = String(row.amount ?? '').trim()
   if (amount.length === 0 || amount.length > 40) return null
-  try {
-    if (parseAmount(amount, 6) <= 0n) return null
-  } catch {
-    return null
-  }
   const delayMinutes = Number.isSafeInteger(row.delayMinutes) && row.delayMinutes >= 1
     ? row.delayMinutes
     : Number(row.time)
@@ -134,16 +145,50 @@ function sanitizeTask(row, index) {
   if (id.length === 0) id = `${index}-${address.toLowerCase()}-${amount}-${delayMinutes}`.slice(0, 80)
   if (id.length === 0 || id.length > 80) return null
   const error = typeof row.error === 'string' ? row.error.slice(0, 180) : ''
+  const officialId = taskAssetId(row)
+  if (officialId) {
+    const meta = officialTaskMeta(officialId)
+    try {
+      if (parseAmount(amount, meta.decimals) <= 0n) return null
+    } catch {
+      return null
+    }
+    return {
+      id,
+      address: address.toLowerCase(),
+      amount,
+      asset: meta.id,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      delayMinutes,
+      status,
+      triggerAt,
+      chainId,
+      error,
+    }
+  }
+  return sanitizeCustomTask(row, { id, address, amount, delayMinutes, status, triggerAt, chainId, error })
+}
+
+function sanitizeCustomTask(row, base) {
+  const tokenAddress = typeof row.tokenAddress === 'string' ? row.tokenAddress.toLowerCase() : ''
+  if (!ADDRESS.test(tokenAddress) || /^0x0{40}$/i.test(tokenAddress)) return null
+  const decimals = Number(row.decimals)
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return null
+  const symbol = typeof row.symbol === 'string' ? row.symbol.trim() : ''
+  if (!/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(symbol)) return null
+  try {
+    if (parseAmount(base.amount, decimals) <= 0n) return null
+  } catch {
+    return null
+  }
   return {
-    id,
-    address: address.toLowerCase(),
-    amount,
-    asset,
-    delayMinutes,
-    status,
-    triggerAt,
-    chainId,
-    error,
+    ...base,
+    address: base.address.toLowerCase(),
+    asset: `custom:${tokenAddress}`,
+    symbol,
+    decimals,
+    tokenAddress,
   }
 }
 
@@ -151,6 +196,7 @@ function legacyToken(token) {
   if (token === 'USDC' || token === 'NATIVE' || token === 'MSG') return 'USDC'
   if (token === 'EURC') return 'EURC'
   if (token === 'TOKEN') return 'TOKEN'
+  if (typeof token === 'string' && /^[A-Za-z][A-Za-z0-9]{0,31}$/.test(token)) return token
   return null
 }
 

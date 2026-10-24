@@ -1,3 +1,4 @@
+import { parseAmount } from './amounts.js'
 import { MAX_BATCH, MAX_DELAY_MINUTES, MAX_MEMO_CHARS } from './constants.js'
 import { AppError } from './errors.js'
 
@@ -12,7 +13,7 @@ export function assertAddress(value, label = 'Address') {
   return `0x${raw.slice(2).toLowerCase()}`
 }
 
-export function parsePayrollList(text, globalAmountText) {
+export function parsePayrollList(text, globalAmountText, decimals) {
   const lines = String(text ?? '').split(/\r?\n/)
   const transfers = []
   for (let index = 0; index < lines.length; index += 1) {
@@ -25,6 +26,16 @@ export function parsePayrollList(text, globalAmountText) {
     const amountText = match[2] ?? String(globalAmountText ?? '').trim()
     if (!amountText) {
       throw new AppError(`Line ${index + 1} has no amount, and the global amount is empty.`)
+    }
+    if (decimals != null) {
+      let units
+      try {
+        units = parseAmount(amountText, decimals)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Amount must be a plain decimal number.'
+        throw new AppError(`Line ${index + 1}: ${message}`)
+      }
+      if (units <= 0n) throw new AppError(`Line ${index + 1} amount must be greater than zero.`)
     }
     transfers.push({ to: assertAddress(match[1], `Line ${index + 1} recipient`), amountText })
   }

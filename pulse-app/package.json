@@ -8,20 +8,15 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "demo:video": "node scripts/render-demo-video.mjs",
-    "test": "node --test src/lib/amounts.test.js src/lib/arcGas.test.js src/lib/parse.test.js src/lib/state.test.js src/lib/networks.test.js src/lib/payments.test.js src/lib/walletChain.test.js src/lib/storage.test.js src/lib/allowances.test.js src/lib/ledgerCsv.test.js src/lib/sendGuard.test.js src/lib/contacts.test.js src/lib/payrollCsv.test.js src/lib/audit.test.js"
+    "test": "node --test src/lib/amounts.test.js src/lib/arcGas.test.js src/lib/parse.test.js src/lib/state.test.js src/lib/networks.test.js src/lib/payments.test.js src/lib/walletChain.test.js src/lib/storage.test.js src/lib/allowances.test.js src/lib/ledgerCsv.test.js src/lib/sendGuard.test.js src/lib/contacts.test.js src/lib/payrollCsv.test.js src/lib/customTokens.test.js src/lib/audit.test.js"
   },
   "dependencies": {
-    "@circle-fin/adapter-viem-v2": "^1.12.1",
-    "@circle-fin/app-kit": "^1.8.1",
     "canvas-confetti": "^1.9.4",
     "ethers": "^6.17.0",
     "firebase": "^10.13.0",
-    "framer-motion": "^12.40.0",
     "lucide-react": "^1.21.0",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "viem": "^2.53.1"
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -33,7 +28,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
-    "opentype.js": "^2.0.0",
     "postcss": "^8.5.15",
     "solc": "^0.8.28",
     "tailwindcss": "^3.4.4",

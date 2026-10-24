@@ -1,17 +1,19 @@
 import { BrowserProvider, Contract, getAddress } from 'ethers'
 import { ERC20_ABI } from './abi.js'
-import { USDC_ERC20_DECIMALS } from './constants.js'
+import { sanitizeCustomToken } from './customTokens.js'
 import { AppError } from './errors.js'
-import { getArcNetwork, tokenAddress } from './networks.js'
+import { getArcNetwork, NETWORKS } from './networks.js'
 
 // keccak256("Approval(address,address,uint256)")
 export const APPROVAL_TOPIC = '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925'
 
-// The Arc Testnet explorer returns the filtered set in one response and ignores
-// page and offset. A result this large is treated as truncated, not as a full list.
+// One explorer page. A result this large is treated as truncated, not as a full list.
 export const MAX_APPROVAL_LOGS = 10_000
 
-const ASSETS = ['usdc', 'eurc']
+// Public Arc RPCs reject eth_getLogs ranges of 10,000 blocks. Keep the inclusive window smaller.
+export const RPC_LOG_SPAN = 9_999n
+
+const MAX_BLOCKSCOUT_PAGES = 4
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const EXPLORER_TIMEOUT_MS = 12_000
 
@@ -42,7 +44,7 @@ export function spendersFromApprovalLogs(logs, owner, token = '') {
     if (!Array.isArray(topics) || topics.length < 3) continue
     if (String(topics[0]).toLowerCase() !== APPROVAL_TOPIC) continue
     if (tokenAddress && log.address) {
-      const loggedToken = canonicalAddress(log.address)
+      const loggedToken = canonicalAddress(typeof log.address === 'string' ? log.address : log.address?.hash)
       if (!loggedToken || loggedToken !== tokenAddress) continue
     }
     if (addressFromTopic(topics[1]) !== ownerAddress) continue
@@ -54,11 +56,14 @@ export function spendersFromApprovalLogs(logs, owner, token = '') {
   return spenders
 }
 
-export function approvalLogsUrl(explorer, token, owner) {
+function officialExplorer(explorer) {
   const base = typeof explorer === 'string' ? explorer.replace(/\/$/, '') : ''
-  if (base !== 'https://explorer.testnet.arc.io') {
-    throw new AppError('Allowance discovery is available on Arc Testnet.')
-  }
+  return NETWORKS.some((network) => network.explorer === base) ? base : ''
+}
+
+export function approvalLogsUrl(explorer, token, owner) {
+  const base = officialExplorer(explorer)
+  if (!base) throw new AppError('Allowance discovery uses the official Arc explorer.')
   const tokenContract = canonicalAddress(token)
   const ownerAddress = canonicalAddress(owner)
   if (!tokenContract || !ownerAddress) {
@@ -73,8 +78,32 @@ export function approvalLogsUrl(explorer, token, owner) {
     topic0: APPROVAL_TOPIC,
     topic0_1_opr: 'and',
     topic1: `0x${ownerAddress.slice(2).toLowerCase().padStart(64, '0')}`,
+    page: '1',
+    offset: String(MAX_APPROVAL_LOGS),
   })
   return `${base}/api?${params.toString()}`
+}
+
+export function blockscoutLogsUrl(explorer, token, pageParams) {
+  const base = officialExplorer(explorer)
+  if (!base) throw new AppError('Allowance discovery uses the official Arc explorer.')
+  const tokenContract = canonicalAddress(token)
+  if (!tokenContract) throw new AppError('Allowance discovery needs a token and an owner.')
+  const url = new URL(`${base}/api/v2/addresses/${tokenContract}/logs`)
+  if (pageParams && typeof pageParams === 'object') {
+    for (const [key, value] of Object.entries(pageParams)) {
+      if (value == null) continue
+      url.searchParams.set(key, String(value))
+    }
+  }
+  return url.toString()
+}
+
+export function recentLogRange(latestBlock) {
+  const latest = typeof latestBlock === 'bigint' ? latestBlock : BigInt(latestBlock)
+  if (latest < 0n) throw new AppError('The Arc RPC did not return a block.')
+  const fromBlock = latest + 1n > RPC_LOG_SPAN ? latest - RPC_LOG_SPAN + 1n : 0n
+  return { fromBlock, toBlock: latest }
 }
 
 export function logsFromExplorerPayload(payload) {
@@ -87,8 +116,23 @@ export function logsFromExplorerPayload(payload) {
   throw new AppError('The Arc explorer did not return approval logs.')
 }
 
-export function activeAllowanceRows(asset, spenders, values) {
-  if (asset !== 'usdc' && asset !== 'eurc') throw new AppError('Unsupported asset.')
+export function logsFromBlockscoutPayload(payload) {
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.items)) {
+    throw new AppError('The Arc explorer did not return approval logs.')
+  }
+  return payload.items.map((item) => ({
+    address: item?.address?.hash ?? item?.address,
+    topics: Array.isArray(item?.topics)
+      ? item.topics.map((topic) => (typeof topic === 'string' ? topic : '0x'))
+      : [],
+    data: item?.data,
+  }))
+}
+
+export function activeAllowanceRows(asset, spenders, values, extra = {}) {
+  if (typeof asset !== 'string' || asset.length === 0 || asset.length > 80) {
+    throw new AppError('Unsupported asset.')
+  }
   if (!Array.isArray(spenders) || !Array.isArray(values) || spenders.length !== values.length) {
     throw new AppError('Allowance results did not match the spender list.')
   }
@@ -96,7 +140,12 @@ export function activeAllowanceRows(asset, spenders, values) {
   for (let index = 0; index < spenders.length; index += 1) {
     const value = values[index]
     if (typeof value !== 'bigint' || value <= 0n) continue
-    rows.push({ asset, spender: spenders[index], value })
+    const row = { asset, spender: spenders[index], value }
+    if (extra.symbol) row.symbol = extra.symbol
+    if (Number.isInteger(extra.decimals)) row.decimals = extra.decimals
+    if (extra.token) row.token = extra.token
+    if (extra.partial) row.partial = true
+    rows.push(row)
   }
   return rows
 }
@@ -115,6 +164,27 @@ async function mapPool(items, limit, mapper) {
   return results
 }
 
+function explorerSignal() {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(EXPLORER_TIMEOUT_MS)
+    : undefined
+}
+
+async function readExplorerJson(response) {
+  if (!response || response.ok === false || typeof response.json !== 'function') {
+    throw new AppError('The Arc explorer did not return approval logs.')
+  }
+  const type = typeof response.headers?.get === 'function' ? response.headers.get('content-type') ?? '' : ''
+  if (type.includes('text/html')) {
+    throw new AppError('The Arc explorer did not return approval logs.')
+  }
+  try {
+    return await response.json()
+  } catch (error) {
+    throw new AppError('The Arc explorer did not return approval logs.', { cause: error })
+  }
+}
+
 export async function fetchApprovalLogs({ explorer, token, owner, fetchImpl }) {
   const request = fetchImpl ?? globalThis.fetch
   if (typeof request !== 'function') {
@@ -123,24 +193,11 @@ export async function fetchApprovalLogs({ explorer, token, owner, fetchImpl }) {
   const url = approvalLogsUrl(explorer, token, owner)
   let response
   try {
-    response = await request(url, {
-      headers: { accept: 'application/json' },
-      signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-        ? AbortSignal.timeout(EXPLORER_TIMEOUT_MS)
-        : undefined,
-    })
+    response = await request(url, { headers: { accept: 'application/json' }, signal: explorerSignal() })
   } catch (error) {
     throw new AppError('The Arc explorer did not return approval logs.', { cause: error })
   }
-  if (!response?.ok || typeof response.json !== 'function') {
-    throw new AppError('The Arc explorer did not return approval logs.')
-  }
-  let payload
-  try {
-    payload = await response.json()
-  } catch (error) {
-    throw new AppError('The Arc explorer did not return approval logs.', { cause: error })
-  }
+  const payload = await readExplorerJson(response)
   const logs = logsFromExplorerPayload(payload)
   if (logs.length >= MAX_APPROVAL_LOGS) {
     throw new AppError('This wallet has too many approval events to list safely.')
@@ -148,22 +205,128 @@ export async function fetchApprovalLogs({ explorer, token, owner, fetchImpl }) {
   return logs
 }
 
-async function allowancesForAsset(provider, arc, account, asset, fetchImpl) {
-  const token = tokenAddress(arc, asset)
-  const contract = new Contract(token, ERC20_ABI, provider)
-  const [decimals, logs] = await Promise.all([
-    contract.decimals(),
-    fetchApprovalLogs({ explorer: arc.explorer, token, owner: account, fetchImpl }),
-  ])
-  if (Number(decimals) !== USDC_ERC20_DECIMALS) {
-    throw new AppError('Token decimals are not 6. Allowances were not listed.')
+export async function fetchBlockscoutApprovalLogs({ explorer, token, fetchImpl }) {
+  const request = fetchImpl ?? globalThis.fetch
+  if (typeof request !== 'function') {
+    throw new AppError('This browser cannot reach the Arc explorer.')
   }
-  const spenders = spendersFromApprovalLogs(logs, account, token)
-  const values = await mapPool(spenders, 8, (spender) => contract.allowance(account, spender))
-  return activeAllowanceRows(asset, spenders, values)
+  const logs = []
+  let pageParams = null
+  for (let page = 0; page < MAX_BLOCKSCOUT_PAGES; page += 1) {
+    const url = blockscoutLogsUrl(explorer, token, pageParams)
+    let response
+    try {
+      response = await request(url, { headers: { accept: 'application/json' }, signal: explorerSignal() })
+    } catch (error) {
+      throw new AppError('The Arc explorer did not return approval logs.', { cause: error })
+    }
+    const payload = await readExplorerJson(response)
+    logs.push(...logsFromBlockscoutPayload(payload))
+    pageParams = payload.next_page_params ?? null
+    if (!pageParams) return { logs, partial: false }
+  }
+  return { logs, partial: true }
 }
 
-export async function listActiveAllowances({ eip1193, expectedChainId, fetchImpl }) {
+export async function fetchRecentRpcLogs({ provider, token, owner }) {
+  if (!provider || typeof provider.getBlock !== 'function' || typeof provider.getLogs !== 'function') {
+    throw new AppError('This wallet cannot read recent approval logs.')
+  }
+  const block = await provider.getBlock('latest')
+  const number = block?.number
+  if (typeof number !== 'number' && typeof number !== 'bigint') {
+    throw new AppError('The Arc RPC did not return a block.')
+  }
+  const range = recentLogRange(number)
+  const ownerAddress = canonicalAddress(owner)
+  const tokenAddress = canonicalAddress(token)
+  if (!ownerAddress || !tokenAddress) throw new AppError('Allowance discovery needs a token and an owner.')
+  let logs
+  try {
+    logs = await provider.getLogs({
+      address: tokenAddress,
+      fromBlock: Number(range.fromBlock),
+      toBlock: Number(range.toBlock),
+      topics: [APPROVAL_TOPIC, `0x${ownerAddress.slice(2).toLowerCase().padStart(64, '0')}`],
+    })
+  } catch (error) {
+    throw new AppError('The Arc RPC did not return approval logs.', { cause: error })
+  }
+  if (!Array.isArray(logs)) throw new AppError('The Arc RPC did not return approval logs.')
+  return { logs, partial: true, fromBlock: range.fromBlock, toBlock: range.toBlock }
+}
+
+function truncatedExplorerError(error) {
+  return /too many approval events/i.test(String(error?.message ?? ''))
+}
+
+export async function discoverApprovalLogs({ explorer, token, owner, fetchImpl, provider }) {
+  try {
+    const logs = await fetchApprovalLogs({ explorer, token, owner, fetchImpl })
+    return { logs, partial: false, source: 'explorer' }
+  } catch (explorerError) {
+    if (truncatedExplorerError(explorerError)) throw explorerError
+    try {
+      const found = await fetchBlockscoutApprovalLogs({ explorer, token, fetchImpl })
+      return { logs: found.logs, partial: found.partial, source: 'blockscout' }
+    } catch (blockscoutError) {
+      if (!provider) {
+        throw new AppError('The Arc explorer did not return approval logs.', { cause: blockscoutError })
+      }
+      try {
+        const found = await fetchRecentRpcLogs({ provider, token, owner })
+        return { logs: found.logs, partial: true, source: 'rpc' }
+      } catch (rpcError) {
+        throw new AppError(
+          'Approval logs could not be read from the Arc explorer or from the last 9,999 blocks.',
+          { cause: rpcError },
+        )
+      }
+    }
+  }
+}
+
+async function allowancesForToken(provider, arc, account, token, fetchImpl) {
+  const contract = new Contract(token.address, ERC20_ABI, provider)
+  const [decimals, found] = await Promise.all([
+    contract.decimals(),
+    discoverApprovalLogs({
+      explorer: arc.explorer,
+      token: token.address,
+      owner: account,
+      fetchImpl,
+      provider,
+    }),
+  ])
+  if (Number(decimals) !== token.decimals) {
+    throw new AppError(`${token.symbol} reported ${Number(decimals)} decimals, not ${token.decimals}. Allowances were not listed.`)
+  }
+  const spenders = spendersFromApprovalLogs(found.logs, account, token.address)
+  const values = await mapPool(spenders, 8, (spender) => contract.allowance(account, spender))
+  return {
+    partial: found.partial,
+    rows: activeAllowanceRows(token.id, spenders, values, {
+      symbol: token.symbol,
+      decimals: token.decimals,
+      token: token.address,
+      partial: found.partial,
+    }),
+  }
+}
+
+function tokensToScan(arc, extra) {
+  const tokens = [...arc.tokens]
+  const seen = new Set(tokens.map((token) => token.address.toLowerCase()))
+  for (const row of Array.isArray(extra) ? extra : []) {
+    const clean = sanitizeCustomToken(row, arc)
+    if (!clean || seen.has(clean.address)) continue
+    seen.add(clean.address)
+    tokens.push(clean)
+  }
+  return tokens
+}
+
+export async function listActiveAllowances({ eip1193, expectedChainId, fetchImpl, tokens = [] }) {
   if (!eip1193?.request) throw new AppError('Connect a wallet before continuing.')
   const provider = new BrowserProvider(eip1193)
   try {
@@ -175,10 +338,10 @@ export async function listActiveAllowances({ eip1193, expectedChainId, fetchImpl
       throw new AppError('The wallet network changed. Review the allowance list and try again.')
     }
     const arc = getArcNetwork(chainId)
-    if (!arc?.testnet) throw new AppError('Switch to Arc Testnet to list USDC and EURC allowances.')
+    if (!arc) throw new AppError('Switch to Arc to list token allowances.')
 
-    const groups = await Promise.all(ASSETS.map((asset) => (
-      allowancesForAsset(provider, arc, account, asset, fetchImpl)
+    const groups = await Promise.all(tokensToScan(arc, tokens).map((token) => (
+      allowancesForToken(provider, arc, account, token, fetchImpl)
     )))
     const currentAccount = getAddress(await (await provider.getSigner()).getAddress())
     const currentChainId = Number((await provider.getNetwork()).chainId)
@@ -188,7 +351,10 @@ export async function listActiveAllowances({ eip1193, expectedChainId, fetchImpl
     if (currentChainId !== chainId) {
       throw new AppError('The wallet network changed. Review the allowance list and try again.')
     }
-    return groups.flat()
+    return {
+      rows: groups.flatMap((group) => group.rows),
+      partial: groups.some((group) => group.partial),
+    }
   } finally {
     provider.destroy()
   }

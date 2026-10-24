@@ -1,3 +1,4 @@
+import { formatToken } from './amounts.js'
 import { AppError } from './errors.js'
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
@@ -17,13 +18,21 @@ export function receiptDate(time) {
   return new Date(parsed).toISOString()
 }
 
+export function ledgerAmount(row) {
+  const decimals = Number(row?.decimals)
+  if (typeof row?.amount === 'bigint' && Number.isInteger(decimals) && decimals >= 0 && decimals <= 18) {
+    return formatToken(row.amount, decimals, Math.min(decimals, 8))
+  }
+  return row?.amount
+}
+
 export function receiptsToCsv(rows) {
   const lines = ['Date,Amount,Token,Recipient Address']
   const list = Array.isArray(rows) ? rows : []
   for (const row of list) {
     lines.push([
       csvCell(receiptDate(row?.time)),
-      csvCell(row?.amount),
+      csvCell(ledgerAmount(row)),
       csvCell(row?.token),
       csvCell(row?.to),
     ].join(','))

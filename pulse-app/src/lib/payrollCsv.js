@@ -104,7 +104,7 @@ function resolveRecipient(raw, contacts) {
   return { address: assertAddress(matches[0].address, 'Contact address') }
 }
 
-export function payrollCsvToText(csv, contacts = []) {
+export function payrollCsvToText(csv, contacts = [], decimals = 6) {
   let records
   try {
     records = parseCsvRecords(csv)
@@ -113,6 +113,9 @@ export function payrollCsvToText(csv, contacts = []) {
   }
   if (records.length === 0) {
     return { text: '', count: 0, errors: ['The CSV has no recipient rows.'] }
+  }
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    return { text: '', count: 0, errors: ['Token decimals are not supported.'] }
   }
 
   const header = headerIndexes(records[0].cells)
@@ -156,7 +159,7 @@ export function payrollCsvToText(csv, contacts = []) {
       continue
     }
     try {
-      const units = parseAmount(amountText, 6)
+      const units = parseAmount(amountText, decimals)
       if (units <= 0n) throw new AppError('Amount must be greater than zero.')
     } catch (error) {
       errors.push(`Row ${record.line}: ${toUserError(error).message}`)

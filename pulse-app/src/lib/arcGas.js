@@ -50,8 +50,33 @@ export function referenceTransferFee(maxFeePerGas) {
   return REFERENCE_ERC20_GAS * maxFeePerGas
 }
 
-export function assertGasAndValue({ asset, amount, tokenBalance, nativeBalance, feeNative }) {
-  if (asset !== 'usdc' && asset !== 'eurc') throw new AppError('Unsupported asset.')
+function tokenScale(asset, decimals) {
+  if (Number.isInteger(decimals) && decimals >= 0 && decimals <= 18) return decimals
+  if (asset === 'usdc' || asset === 'eurc') return 6
+  return null
+}
+
+function tokenLabel(asset, symbol) {
+  if (typeof symbol === 'string' && symbol.trim()) return symbol.trim()
+  if (asset === 'eurc') return 'EURC'
+  if (asset === 'usdc') return 'USDC'
+  return ''
+}
+
+export function assertGasAndValue({
+  asset,
+  amount,
+  tokenBalance,
+  nativeBalance,
+  feeNative,
+  decimals,
+  symbol,
+  gasToken,
+}) {
+  const scale = tokenScale(asset, decimals)
+  const label = tokenLabel(asset, symbol)
+  const paysWithNativeUsdc = gasToken === true || (gasToken == null && asset === 'usdc')
+  if (!label || scale == null) throw new AppError('Unsupported asset.')
   if (typeof amount !== 'bigint' || amount < 0n) throw new AppError('Amount is invalid.')
   if (typeof feeNative !== 'bigint' || feeNative <= 0n) {
     throw new AppError('Gas quote is missing. The payment was not sent.')
@@ -60,7 +85,10 @@ export function assertGasAndValue({ asset, amount, tokenBalance, nativeBalance, 
     throw new AppError('USDC balance could not be read. The payment was not sent.')
   }
 
-  if (asset === 'usdc') {
+  if (paysWithNativeUsdc) {
+    if (scale !== 6) {
+      throw new AppError('USDC decimals did not match the Arc token list. The payment was not sent.')
+    }
     const need = nativeValueOfErc20Usdc(amount) + feeNative
     if (nativeBalance < need) {
       throw new AppError(
@@ -70,9 +98,10 @@ export function assertGasAndValue({ asset, amount, tokenBalance, nativeBalance, 
     return
   }
 
+  const places = Math.min(scale, 8)
   if (typeof tokenBalance !== 'bigint' || tokenBalance < amount) {
-    const have = typeof tokenBalance === 'bigint' ? formatToken(tokenBalance, 6, 6) : 'an unknown amount of'
-    throw new AppError(`Not enough EURC. This needs ${formatToken(amount, 6, 6)} EURC, and the wallet has ${have}.`)
+    const have = typeof tokenBalance === 'bigint' ? formatToken(tokenBalance, scale, places) : 'an unknown amount of'
+    throw new AppError(`Not enough ${label}. This needs ${formatToken(amount, scale, places)} ${label}, and the wallet has ${have}.`)
   }
   if (nativeBalance < feeNative) {
     throw new AppError(

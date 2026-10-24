@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import confetti from 'canvas-confetti'
 import {
-  Activity, ArrowRight, Clock, Contact, Cpu, Download, Droplet, Globe, History, Layers,
+  Activity, ArrowRight, Clock, Contact, Cpu, Droplet, Globe, History, Layers,
   LogOut, MessageSquare, Moon, Settings, Shield, Sun, Terminal, Users, Zap,
 } from 'lucide-react'
 import { assertTokenMetadata, formatToken, parseAmount, parseWholeSupply } from './lib/amounts.js'
 import { HISTORY_LIMIT, TASK_LIMIT, USDC_NATIVE_DECIMALS } from './lib/constants.js'
 import { AppError, toUserError } from './lib/errors.js'
 import { listActiveAllowances } from './lib/allowances.js'
-import { getArcNetwork, NETWORKS } from './lib/networks.js'
+import {
+  addCustomToken, loadCustomTokens, readCustomTokenMetadata, removeCustomToken, saveCustomTokens,
+} from './lib/customTokens.js'
+import { DEFAULT_NETWORK, findOfficialToken, getArcNetwork, NETWORKS } from './lib/networks.js'
 import { switchOrAddChain } from './lib/walletChain.js'
 import { assertAddress, assertDelayMinutes, assertMemo, parsePayrollList } from './lib/parse.js'
 import {
-  deployFixedSupplyToken, readWalletSnapshot, revokeAllowance,
+  deployFixedSupplyToken, paymentToken, readWalletSnapshot, revokeAllowance,
   sendMemo, sendTransfers, tokenDeployReady,
 } from './lib/payments.js'
 import { capTasks, createId, normalizeTasks } from './lib/state.js'
@@ -26,8 +29,9 @@ import { appendWalletHistory, loadWalletState, persistWalletState, readSavedRece
 import { useAnnouncedWallets } from './hooks/useAnnouncedWallets.js'
 
 const CAN_DEPLOY_TOKEN = tokenDeployReady()
+const EMPTY_TOKENS = []
 const MODULES = [
-  { id: 'payments', title: 'Batch payments', subtitle: 'USDC AND EURC', icon: ArrowRight },
+  { id: 'payments', title: 'Batch payments', subtitle: 'ARC TOKENS', icon: ArrowRight },
   { id: 'payroll', title: 'Payroll', subtitle: 'ONE BATCH TRANSFER', icon: Users },
   { id: 'schedule', title: 'Scheduled payments', subtitle: 'SIGN WHEN DUE', icon: Clock },
   { id: 'memo', title: 'On-chain memo', subtitle: 'PUBLIC MESSAGE', icon: MessageSquare },
@@ -55,14 +59,28 @@ function shortAddress(value) {
   return `${value.slice(0, 6)}…${value.slice(-4)}`
 }
 
-function assetLabel(asset) {
-  return asset === 'eurc' ? 'EURC' : 'USDC'
+function assetLabel(asset, symbol) {
+  if (typeof symbol === 'string' && symbol.trim()) return symbol.trim()
+  const official = findOfficialToken(DEFAULT_NETWORK, asset) ?? findOfficialToken(NETWORKS[1], asset)
+  if (official) return official.symbol
+  return 'TOKEN'
 }
 
-function formatAllowance(value) {
+function formatAllowance(value, decimals = 6) {
   if (typeof value !== 'bigint') return ''
   if (value >= 2n ** 255n) return 'Unlimited'
-  return formatToken(value, 6, 6)
+  const scale = Number.isInteger(decimals) ? decimals : 6
+  return formatToken(value, scale, Math.min(scale, 8))
+}
+
+function tokenChoices(network, customTokens) {
+  const official = network?.tokens ?? DEFAULT_NETWORK.tokens
+  const extras = Array.isArray(customTokens) ? customTokens : []
+  return [...official, ...extras]
+}
+
+function tokenFromList(list, id) {
+  return list.find((token) => token.id === id) ?? list.find((token) => token.id === 'usdc') ?? list[0]
 }
 
 function Field({ label, children }) {
@@ -117,6 +135,7 @@ export default function App() {
   const [formError, setFormError] = useState('')
   const [payAddress, setPayAddress] = useState('')
   const [payAmount, setPayAmount] = useState('')
+  const [payTokenId, setPayTokenId] = useState('usdc')
   const [isPaying, setIsPaying] = useState(false)
   const [payrollText, setPayrollText] = useState('')
   const [payrollCsvErrors, setPayrollCsvErrors] = useState([])
@@ -135,6 +154,10 @@ export default function App() {
   const [forgeSymbol, setForgeSymbol] = useState('')
   const [forgeSupply, setForgeSupply] = useState('')
   const [isForging, setIsForging] = useState(false)
+  const [tokenBook, setTokenBook] = useState({ key: '', tokens: EMPTY_TOKENS })
+  const [customAddress, setCustomAddress] = useState('')
+  const [isSavingToken, setIsSavingToken] = useState(false)
+  const [pendingToken, setPendingToken] = useState(null)
   const [isExporting, setIsExporting] = useState(false)
   const [contactBook, setContactBook] = useState({ owner: '', contacts: [] })
   const [contactName, setContactName] = useState('')
@@ -148,7 +171,7 @@ export default function App() {
   const [guardResult, setGuardResult] = useState({ key: '', report: null, error: '' })
   const [guardAck, setGuardAck] = useState('')
   const [guardNonce, setGuardNonce] = useState(0)
-  const [allowanceResult, setAllowanceResult] = useState({ key: '', rows: null, error: '' })
+  const [allowanceResult, setAllowanceResult] = useState({ key: '', rows: null, error: '', partial: false })
   const [revokingKey, setRevokingKey] = useState('')
   const [allowanceNonce, setAllowanceNonce] = useState(0)
 
@@ -170,6 +193,10 @@ export default function App() {
   const contactFormOwnerRef = useRef('')
   const contactGenRef = useRef(0)
   const payrollFileRef = useRef(null)
+  const customTokensRef = useRef(EMPTY_TOKENS)
+  const tokenGenRef = useRef(0)
+  const armTimerRef = useRef(null)
+  const disconnectRef = useRef(null)
   const MAX_TIMER_MS = 2_147_483_647
 
   const pushLog = useCallback((message, type = 'info') => {
@@ -230,11 +257,16 @@ export default function App() {
     }
     const handle = setTimeout(() => {
       timersRef.current.delete(task.id)
-      if (task.triggerAt - Date.now() > 0) armTimer(task)
+      const armAgain = armTimerRef.current
+      if (task.triggerAt - Date.now() > 0 && armAgain) armAgain(task)
       else markReady(task.id)
     }, Math.min(delay, MAX_TIMER_MS))
     timersRef.current.set(task.id, handle)
   }, [markReady])
+
+  useEffect(() => {
+    armTimerRef.current = armTimer
+  }, [armTimer])
 
   const releaseWallet = useCallback(() => {
     dataReadyRef.current = false
@@ -258,7 +290,7 @@ export default function App() {
       for (let pass = 0; pass < 3; pass += 1) {
         refreshAgainRef.current = false
         try {
-          const next = await readWalletSnapshot(providerRef.current)
+          const next = await readWalletSnapshot(providerRef.current, customTokensRef.current)
           if (addressRef.current && addressRef.current !== next.account) {
             releaseWallet()
             pushLog('Wallet account changed. Payment data was reloaded.', 'warning')
@@ -300,7 +332,7 @@ export default function App() {
     if (!eip1193?.on) return undefined
     const onAccounts = (accounts) => {
       if (!accounts?.length) {
-        disconnect()
+        disconnectRef.current?.()
         return
       }
       void refresh()
@@ -389,8 +421,13 @@ export default function App() {
     setTxHistory([])
     setTasks([])
     setLogs([])
-    setAllowanceResult({ key: '', rows: null, error: '' })
+    setAllowanceResult({ key: '', rows: null, error: '', partial: false })
     setRevokingKey('')
+    tokenGenRef.current += 1
+    customTokensRef.current = EMPTY_TOKENS
+    setTokenBook({ key: '', tokens: EMPTY_TOKENS })
+    setCustomAddress('')
+    setPendingToken(null)
     setContactBook({ owner: '', contacts: [] })
     setContactName('')
     setContactAddress('')
@@ -400,6 +437,10 @@ export default function App() {
     setPayrollContactOpen(false)
     contactFormOwnerRef.current = ''
   }
+
+  useEffect(() => {
+    disconnectRef.current = disconnect
+  })
 
   async function connect(provider) {
     setIsConnecting(true)
@@ -448,16 +489,19 @@ export default function App() {
   }
 
   function transferRows(result, status) {
-    return result.transfers.map((transfer) => ({
-      id: createId(),
-      hash: result.hash,
-      amount: formatToken(BigInt(transfer.amount), 6, 6),
-      token: assetLabel(transfer.asset),
-      to: transfer.to,
-      time: receiptStamp(),
-      status,
-      chainId: result.chainId,
-    }))
+    return result.transfers.map((transfer) => {
+      const decimals = Number.isInteger(transfer.decimals) ? transfer.decimals : 6
+      return {
+        id: createId(),
+        hash: result.hash,
+        amount: formatToken(BigInt(transfer.amount), decimals, Math.min(decimals, 8)),
+        token: transfer.symbol || assetLabel(transfer.asset),
+        to: transfer.to,
+        time: receiptStamp(),
+        status,
+        chainId: result.chainId,
+      }
+    })
   }
 
   async function rememberRows(rows, account, taskPatch) {
@@ -538,12 +582,12 @@ export default function App() {
     confetti({ particleCount: 120, spread: 70, origin: { y: 0.3 } })
   }
 
-  function sendPayment(asset) {
+  function sendPayment(token) {
     runAction(setIsPaying, async () => {
       const ready = requireReady()
       const account = addressRef.current
       const recipient = assertAddress(payAddress, 'Recipient')
-      const amount = parseAmount(payAmount, 6)
+      const amount = parseAmount(payAmount, token.decimals)
       const gen = guardGenRef.current + 1
       guardGenRef.current = gen
       const report = await analyzeSendGuard({
@@ -568,7 +612,8 @@ export default function App() {
         )
       }
       const transfers = [{
-        asset,
+        asset: token.id,
+        token,
         to: recipient,
         amount,
       }]
@@ -587,7 +632,7 @@ export default function App() {
       setPayAddress('')
       setPayAmount('')
       assertSameWallet(account, result.hash)
-      pushLog(`${assetLabel(asset)} payment confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
+      pushLog(`${token.symbol} payment confirmed. Gas ceiling ${formatToken(result.feeNative, USDC_NATIVE_DECIMALS, 8)} USDC.`, 'success')
       celebrate()
       await refresh()
     })
@@ -638,6 +683,22 @@ export default function App() {
       setContactError('')
       pushLog(editingContactId ? 'Contact updated.' : 'Contact saved.', 'success')
     })
+  }
+
+  async function persistCustomToken(account, chainId, meta) {
+    const generation = tokenGenRef.current + 1
+    tokenGenRef.current = generation
+    const network = getArcNetwork(chainId)
+    const current = await loadCustomTokens(account, chainId)
+    const saved = await saveCustomTokens(account, chainId, addCustomToken(current, meta, network))
+    if (addressRef.current !== account || tokenGenRef.current !== generation) {
+      throw new AppError('The wallet account changed. Save the token again.')
+    }
+    customTokensRef.current = saved
+    setTokenBook({ key: `${account}:${chainId}`, tokens: saved })
+    setPendingToken(null)
+    void refresh()
+    return saved
   }
 
   function deleteContact(contact) {
@@ -709,7 +770,9 @@ export default function App() {
       return
     }
     file.text().then((text) => {
-      const result = payrollCsvToText(text, shownContacts)
+      const network = getArcNetwork(chainId) ?? DEFAULT_NETWORK
+      const token = tokenFromList(tokenChoices(network, customTokensRef.current), payrollAsset)
+      const result = payrollCsvToText(text, shownContacts, token.decimals)
       if (result.errors.length > 0) {
         setPayrollCsvSummary('')
         setPayrollCsvErrors(result.errors)
@@ -734,11 +797,17 @@ export default function App() {
       }
       if (!dataReadyRef.current) throw toUserError(new Error('Wallet data is still loading.'))
       const network = getArcNetwork(chainId)
-      if (!network?.testnet) throw new AppError('Switch to Arc Testnet before revoking an allowance.')
+      if (!network) throw new AppError('Switch to Arc before revoking an allowance.')
       const account = addressRef.current
       const result = await revokeAllowance({
         eip1193: providerRef.current,
         asset: row.asset,
+        token: row.token ? {
+          id: row.asset,
+          address: row.token,
+          decimals: row.decimals,
+          symbol: row.symbol,
+        } : undefined,
         spender: row.spender,
         expectedChainId: network.chainId,
       })
@@ -766,8 +835,18 @@ export default function App() {
       item.id === task.id ? { ...item, status: 'completed', error: '' } : item
     ))
     try {
-      const amount = parseAmount(task.amount, 6)
-      transfers = [{ asset: task.asset, to: task.address, amount }]
+      const token = task.tokenAddress
+        ? paymentToken(ready.network, {
+          asset: task.asset,
+          token: {
+            address: task.tokenAddress,
+            decimals: task.decimals,
+            symbol: task.symbol,
+          },
+        })
+        : paymentToken(ready.network, { asset: task.asset })
+      const amount = parseAmount(task.amount, token.decimals)
+      transfers = [{ asset: token.id, token, to: task.address, amount }]
       const result = await sendTransfers({
         eip1193: providerRef.current,
         transfers,
@@ -808,14 +887,17 @@ export default function App() {
 
   const dataReady = Boolean(walletAddress) && readyAddress === walletAddress
   const arc = getArcNetwork(chainId)
+  const tokenOwnerKey = dataReady && walletAddress && arc ? `${walletAddress}:${arc.chainId}` : ''
+  const customTokens = tokenBook.key === tokenOwnerKey ? tokenBook.tokens : EMPTY_TOKENS
+  const shownPending = pendingToken && pendingToken.chainKey === tokenOwnerKey ? pendingToken : null
   const allowanceRequestKey = (
     activeModule === 'utilities'
     && utilityTab === 'allowance'
     && eip1193
     && walletAddress
     && dataReady
-    && arc?.testnet
-  ) ? `${walletAddress}:${arc.chainId}:${allowanceNonce}` : ''
+    && arc
+  ) ? `${walletAddress}:${arc.chainId}:${customTokens.map((token) => token.address).join(',')}:${allowanceNonce}` : ''
   const allowanceOwnerPrefix = walletAddress && arc ? `${walletAddress}:${arc.chainId}:` : ''
   const allowanceSameOwner = Boolean(
     allowanceOwnerPrefix
@@ -826,7 +908,7 @@ export default function App() {
   if (activeModule === 'utilities' && utilityTab === 'allowance') {
     if (!eip1193 || !walletAddress) allowancePhase = 'idle'
     else if (!dataReady) allowancePhase = 'waiting'
-    else if (!arc?.testnet) allowancePhase = 'wrong-network'
+    else if (!arc) allowancePhase = 'wrong-network'
     else if (allowanceResult.key !== allowanceRequestKey) allowancePhase = allowanceSameOwner ? 'refreshing' : 'loading'
     else if (allowanceResult.error) allowancePhase = 'error'
     else allowancePhase = 'ready'
@@ -839,7 +921,7 @@ export default function App() {
   if (payAddress.trim() && payAmount.trim()) {
     try {
       const to = assertAddress(payAddress, 'Recipient')
-      const amount = parseAmount(payAmount, 6)
+      const amount = parseAmount(payAmount, tokenFromList(tokenChoices(arc ?? DEFAULT_NETWORK, customTokens), payTokenId).decimals)
       if (amount > 0n) paymentDraft = { to, amount }
     } catch {
       paymentDraft = null
@@ -866,19 +948,20 @@ export default function App() {
   const guardCleared = guardAllowsSend(guardReport, guardAck)
 
   useEffect(() => {
-    if (!allowanceRequestKey || !arc?.testnet) return undefined
+    if (!allowanceRequestKey || !arc) return undefined
     let cancelled = false
     const key = allowanceRequestKey
     const account = walletAddress
     const expectedChainId = arc.chainId
     ;(async () => {
       try {
-        const rows = await listActiveAllowances({
+        const listed = await listActiveAllowances({
           eip1193: providerRef.current,
           expectedChainId,
+          tokens: customTokensRef.current,
         })
         if (cancelled || addressRef.current !== account) return
-        setAllowanceResult({ key, rows, error: '' })
+        setAllowanceResult({ key, rows: listed.rows, partial: listed.partial, error: '' })
       } catch (error) {
         if (cancelled || addressRef.current !== account) return
         console.error(error)
@@ -886,12 +969,13 @@ export default function App() {
         setAllowanceResult((current) => ({
           key,
           rows: current.key.startsWith(`${account}:${expectedChainId}:`) && Array.isArray(current.rows) ? current.rows : null,
+          partial: current.partial,
           error: message,
         }))
       }
     })()
     return () => { cancelled = true }
-  }, [allowanceRequestKey, arc, walletAddress])
+  }, [allowanceRequestKey, arc, walletAddress, customTokens])
 
   useEffect(() => {
     const gen = guardGenRef.current + 1
@@ -962,14 +1046,49 @@ export default function App() {
     return () => { cancelled = true }
   }, [contactOwner])
 
+  const availableTokens = tokenChoices(arc ?? DEFAULT_NETWORK, customTokens)
+  const payToken = tokenFromList(availableTokens, payTokenId)
+  const payrollToken = tokenFromList(availableTokens, payrollAsset)
+  const scheduleToken = tokenFromList(availableTokens, autoAsset)
+  const headerTokens = (snapshot?.balances?.tokens ?? availableTokens.map((token) => ({ ...token, balance: null })))
+    .filter((token) => token.id !== 'usdc')
+
+  useEffect(() => {
+    customTokensRef.current = customTokens
+  }, [tokenOwnerKey, customTokens])
+
+  useEffect(() => {
+    if (!tokenOwnerKey) return undefined
+    let cancelled = false
+    const generation = tokenGenRef.current
+    const separator = tokenOwnerKey.lastIndexOf(':')
+    const account = tokenOwnerKey.slice(0, separator)
+    const chain = Number(tokenOwnerKey.slice(separator + 1))
+    ;(async () => {
+      try {
+        const rows = await loadCustomTokens(account, chain)
+        if (cancelled || tokenGenRef.current !== generation || addressRef.current !== account) return
+        customTokensRef.current = rows
+        setTokenBook({ key: tokenOwnerKey, tokens: rows })
+        void refresh()
+      } catch (error) {
+        if (cancelled || tokenGenRef.current !== generation || addressRef.current !== account) return
+        console.error(error)
+        pushLog(toUserError(error).message, 'warning')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [tokenOwnerKey, refresh, pushLog])
+
   const inputClass = `w-full rounded-lg border p-2.5 font-mono text-sm outline-none ${isDark ? 'border-white/10 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-900'}`
   const cardClass = isDark ? 'border-white/5 bg-slate-900' : 'border-slate-300 bg-white shadow-lg'
   const payrollPreview = (() => {
     if (!payrollText.trim()) return ''
     try {
-      const rows = parsePayrollList(payrollText, globalAmount)
-      const total = rows.reduce((sum, row) => sum + parseAmount(row.amountText, 6), 0n)
-      return `${rows.length} recipients, ${formatToken(total, 6, 6)} ${assetLabel(payrollAsset)}`
+      const rows = parsePayrollList(payrollText, globalAmount, payrollToken.decimals)
+      const places = Math.min(payrollToken.decimals, 8)
+      const total = rows.reduce((sum, row) => sum + parseAmount(row.amountText, payrollToken.decimals), 0n)
+      return `${rows.length} recipients, ${formatToken(total, payrollToken.decimals, places)} ${payrollToken.symbol}`
     } catch (error) {
       return toUserError(error).message
     }
@@ -1010,7 +1129,7 @@ export default function App() {
               onChange={(event) => switchNetwork(event.target.value)}
               className={`max-w-[9.5rem] rounded-full border px-2 py-1 font-mono text-[10px] font-bold ${isDark ? 'border-white/10 bg-slate-900 text-cyan-400' : 'border-slate-300 bg-slate-100 text-cyan-700'}`}
             >
-              {!arc && <option value="">Unsupported network</option>}
+              {!arc && <option value="">{chainId == null ? DEFAULT_NETWORK.name : 'Unsupported network'}</option>}
               {NETWORKS.map((network) => (
                 <option key={network.chainId} value={network.hexChainId}>{network.name}</option>
               ))}
@@ -1020,17 +1139,9 @@ export default function App() {
             </button>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <a
-              href="/nexoria-demo.mp4"
-              download="nexoria-demo.mp4"
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] font-bold ${isDark ? 'border-white/10 bg-slate-900 text-slate-300' : 'border-slate-300 bg-white text-slate-700'}`}
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              Download Demo Video
-            </a>
             <div className={`hidden items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-[10px] font-bold md:flex ${isDark ? 'border-white/10 bg-slate-900 text-cyan-400' : 'border-slate-300 bg-slate-100 text-cyan-700'}`}>
               <Globe className="h-3 w-3" />
-              <span>{arc ? arc.name : 'Not Arc'} | BLK {snapshot?.telemetry?.blockNumber?.toString() ?? '—'}</span>
+              <span>{arc ? arc.name : chainId == null ? DEFAULT_NETWORK.name : 'Not Arc'} | BLK {snapshot?.telemetry?.blockNumber?.toString() ?? '—'}</span>
             </div>
             {walletAddress ? (
               <button type="button" onClick={disconnect} className={`flex items-center gap-2 rounded-lg border px-4 py-2 font-mono text-sm font-bold ${isDark ? 'border-cyan-500/30 bg-slate-900 text-cyan-400' : 'border-cyan-500 bg-white text-cyan-700'}`}>
@@ -1075,17 +1186,25 @@ export default function App() {
                 )}
               </div>
               <p className="max-w-xl text-xs text-slate-500">
-                Transfers use the 6-decimal USDC and EURC contracts. Gas is reserved from the same USDC balance in 18-decimal native units, with a 20 gwei fee floor.
+                USDC is one balance: 6-decimal ERC-20 transfers and 18-decimal gas. Other Arc tokens use their own decimals and still pay gas in USDC.
               </p>
             </div>
             <div className={`w-full max-w-sm space-y-2 rounded-xl border p-4 font-mono text-xs font-bold ${isDark ? 'border-white/5 bg-slate-950' : 'border-slate-200 bg-slate-50'}`}>
-              <div className="flex justify-between text-cyan-500">
+              <div className="flex justify-between text-base text-cyan-500">
                 <span>USDC</span>
-                <span>{snapshot ? formatToken(snapshot.balances.usdc, 6, 6) : '—'}</span>
+                <span>{snapshot?.balances ? formatToken(snapshot.balances.usdc, 6, 6) : '—'}</span>
               </div>
-              <div className="flex justify-between text-fuchsia-400">
-                <span>EURC</span>
-                <span>{snapshot ? formatToken(snapshot.balances.eurc, 6, 6) : '—'}</span>
+              <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                {headerTokens.map((token) => {
+                  const places = Math.min(token.decimals, 8)
+                  const text = typeof token.balance === 'bigint' ? formatToken(token.balance, token.decimals, places) : '—'
+                  return (
+                    <div key={token.id} className="flex justify-between gap-3 text-slate-400">
+                      <span className="truncate">{token.symbol}</span>
+                      <span>{text}</span>
+                    </div>
+                  )
+                })}
               </div>
               <div className="flex justify-between text-slate-500">
                 <span>Fee ceiling, 65,000 gas</span>
@@ -1112,7 +1231,7 @@ export default function App() {
               <Settings className={`h-5 w-5 ${activeModule === 'utilities' ? 'text-purple-500' : 'text-slate-400'}`} />
               <span>
                 <span className="block text-sm font-bold">Utilities</span>
-                <span className="font-mono text-[9px] tracking-widest text-slate-500">LEDGER, CONTACTS, ALLOWANCE</span>
+                <span className="font-mono text-[9px] tracking-widest text-slate-500">LEDGER, TOKENS, ALLOWANCE</span>
               </span>
             </button>
           </div>
@@ -1124,7 +1243,7 @@ export default function App() {
               {activeModule === 'payments' && (
                 <div className="space-y-4">
                   <h2 className="flex items-center gap-2 text-xl font-bold"><ArrowRight className="text-cyan-500" /> Batch payments</h2>
-                  <p className="text-sm text-slate-500">Enter the recipient and the amount. Send Guard checks the address before the transfer. Gas is paid in USDC.</p>
+                  <p className="text-sm text-slate-500">Choose a token, then enter the recipient and the amount. Send Guard checks the address before the transfer. Gas is paid in USDC.</p>
                   <Field label="Recipient address">
                     <div className="flex gap-2">
                       <input
@@ -1157,9 +1276,18 @@ export default function App() {
                     onPick={usePayContact}
                     isDark={isDark}
                   />
-                  <Field label="Amount">
-                    <input value={payAmount} onChange={(event) => setPayAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className={inputClass} />
-                  </Field>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Token">
+                      <select aria-label="Payment token" value={payToken.id} onChange={(event) => setPayTokenId(event.target.value)} className={inputClass}>
+                        {availableTokens.map((token) => (
+                          <option key={token.id} value={token.id}>{token.symbol}{token.isOfficial ? '' : ' · custom'}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Amount">
+                      <input value={payAmount} onChange={(event) => setPayAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className={inputClass} />
+                    </Field>
+                  </div>
                   {guardPhase === 'blocked' && (
                     <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
                       {!walletAddress && 'Connect a wallet on Arc before Send Guard can check this recipient.'}
@@ -1224,14 +1352,13 @@ export default function App() {
                         </button>
                       )}
                       {guardReport.level !== 'known' && guardCleared && (
-                        <p className={`font-mono text-[10px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Acknowledged. Choose Send USDC or Send EURC.</p>
+                        <p className={`font-mono text-[10px] ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Acknowledged. Send {payToken.symbol} when this check stays clear.</p>
                       )}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-3">
-                    <button type="button" disabled={isPaying || !guardCleared} onClick={() => sendPayment('usdc')} className="rounded-lg bg-cyan-500 py-3 font-bold text-slate-950 disabled:opacity-50">Send USDC</button>
-                    <button type="button" disabled={isPaying || !guardCleared} onClick={() => sendPayment('eurc')} className="rounded-lg bg-indigo-500 py-3 font-bold text-white disabled:opacity-50">Send EURC</button>
-                  </div>
+                  <button type="button" disabled={isPaying || !guardCleared} onClick={() => sendPayment(payToken)} className="w-full rounded-lg bg-cyan-500 py-3 font-bold text-slate-950 disabled:opacity-50">
+                    {isPaying ? 'Sending…' : `Send ${payToken.symbol}`}
+                  </button>
                 </div>
               )}
 
@@ -1242,10 +1369,11 @@ export default function App() {
                     <Field label="AMOUNT WHEN A LINE OMITS ONE">
                       <input value={globalAmount} onChange={(event) => setGlobalAmount(event.target.value)} inputMode="decimal" className={inputClass} />
                     </Field>
-                    <Field label="ASSET">
-                      <select value={payrollAsset} onChange={(event) => setPayrollAsset(event.target.value)} className={inputClass}>
-                        <option value="usdc">USDC</option>
-                        <option value="eurc">EURC</option>
+                    <Field label="TOKEN">
+                      <select aria-label="Payroll token" value={payrollToken.id} onChange={(event) => setPayrollAsset(event.target.value)} className={inputClass}>
+                        {availableTokens.map((token) => (
+                          <option key={token.id} value={token.id}>{token.symbol}{token.isOfficial ? '' : ' · custom'}</option>
+                        ))}
                       </select>
                     </Field>
                   </div>
@@ -1284,7 +1412,7 @@ export default function App() {
                       onChange={readPayrollCsv}
                     />
                   </div>
-                  <p className="text-xs text-slate-500">Each row needs an address or an exact contact name, then an amount. A header such as address,amount is optional.</p>
+                  <p className="text-xs text-slate-500">Each row needs an address or an exact contact name, then an amount. {payrollToken.symbol} allows at most {payrollToken.decimals} decimal places. A header such as address,amount is optional.</p>
                   {payrollCsvSummary && (
                     <p role="status" className={`rounded-xl border p-3 text-xs ${isDark ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-emerald-600/40 bg-emerald-50 text-emerald-900'}`}>
                       {payrollCsvSummary}
@@ -1316,11 +1444,12 @@ export default function App() {
                   <button type="button" disabled={isPayroll || !payrollText.trim()} onClick={() => runAction(setIsPayroll, async () => {
                     const ready = requireReady()
                     const account = addressRef.current
-                    const rows = parsePayrollList(payrollText, globalAmount)
+                    const rows = parsePayrollList(payrollText, globalAmount, payrollToken.decimals)
                     const transfers = rows.map((row) => ({
-                      asset: payrollAsset,
+                      asset: payrollToken.id,
+                      token: payrollToken,
                       to: row.to,
-                      amount: parseAmount(row.amountText, 6),
+                      amount: parseAmount(row.amountText, payrollToken.decimals),
                     }))
                     let result
                     try {
@@ -1353,10 +1482,11 @@ export default function App() {
                   <p className="text-sm text-slate-500">The timer only marks a payment ready. Nothing is signed until you press send, including after a reload.</p>
                   <div className="grid grid-cols-2 gap-4">
                     <Field label="AMOUNT"><input value={autoAmount} onChange={(event) => setAutoAmount(event.target.value)} inputMode="decimal" className={inputClass} /></Field>
-                    <Field label="ASSET">
-                      <select value={autoAsset} onChange={(event) => setAutoAsset(event.target.value)} className={inputClass}>
-                        <option value="usdc">USDC</option>
-                        <option value="eurc">EURC</option>
+                    <Field label="TOKEN">
+                      <select aria-label="Scheduled payment token" value={scheduleToken.id} onChange={(event) => setAutoAsset(event.target.value)} className={inputClass}>
+                        {availableTokens.map((token) => (
+                          <option key={token.id} value={token.id}>{token.symbol}{token.isOfficial ? '' : ' · custom'}</option>
+                        ))}
                       </select>
                     </Field>
                   </div>
@@ -1373,15 +1503,19 @@ export default function App() {
                       current.splice(index, 1)
                     }
                     const minutes = assertDelayMinutes(autoTime)
-                    const amount = parseAmount(autoAmount, 6)
+                    const amount = parseAmount(autoAmount, scheduleToken.decimals)
                     if (amount <= 0n) throw toUserError(new Error('Amount must be greater than zero.'))
                     const to = assertAddress(autoAddress, 'Recipient')
                     if (to === addressRef.current) throw toUserError(new Error('Recipient is the connected wallet.'))
+                    const places = Math.min(scheduleToken.decimals, 8)
                     const task = {
                       id: createId(),
                       address: to,
-                      amount: formatToken(amount, 6, 6),
-                      asset: autoAsset,
+                      amount: formatToken(amount, scheduleToken.decimals, places),
+                      asset: scheduleToken.id,
+                      symbol: scheduleToken.symbol,
+                      decimals: scheduleToken.decimals,
+                      ...(scheduleToken.isOfficial ? {} : { tokenAddress: scheduleToken.address }),
                       delayMinutes: minutes,
                       status: 'pending',
                       triggerAt: Date.now() + minutes * 60_000,
@@ -1400,7 +1534,7 @@ export default function App() {
                     {tasks.map((task) => (
                       <div key={task.id} className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 font-mono text-xs text-orange-300">
                         <div className="flex items-center justify-between gap-3">
-                          <span>Send {task.amount} {assetLabel(task.asset)} to {shortAddress(task.address)}</span>
+                          <span>Send {task.amount} {task.symbol || assetLabel(task.asset)} to {shortAddress(task.address)}</span>
                           <span>{task.status}</span>
                         </div>
                         {task.error && <p className="mt-1 text-rose-300">{task.error}</p>}
@@ -1612,7 +1746,7 @@ export default function App() {
 
                   {utilityTab === 'allowance' && (
                     <div className="space-y-3">
-                      <p className="text-sm text-slate-500">Active USDC and EURC approvals granted by this wallet on Arc Testnet. Revoke sets that allowance back to zero.</p>
+                      <p className="text-sm text-slate-500">Active approvals for official Arc tokens and your custom tokens on this network. Revoke sets that allowance back to zero. Gas is paid in USDC.</p>
                       <div className="text-right">
                         <button
                           type="button"
@@ -1626,7 +1760,7 @@ export default function App() {
                       {allowancePhase === 'idle' && <p className="py-4 text-center text-xs text-slate-500">Connect a wallet to list allowances.</p>}
                       {allowancePhase === 'waiting' && <p role="status" className="py-4 text-center text-xs text-slate-500">Wallet data is still loading.</p>}
                       {allowancePhase === 'wrong-network' && (
-                        <p role="status" className="py-4 text-center text-xs text-amber-300">Switch to Arc Testnet to list USDC and EURC allowances.</p>
+                        <p role="status" className="py-4 text-center text-xs text-amber-300">Switch to Arc to list token allowances.</p>
                       )}
                       {(allowancePhase === 'loading' || allowancePhase === 'refreshing') && (
                         <p role="status" className="py-2 text-center font-mono text-xs text-slate-500">Reading approvals…</p>
@@ -1637,8 +1771,13 @@ export default function App() {
                           <button type="button" onClick={() => setAllowanceNonce((value) => value + 1)} className="w-full rounded-lg border border-amber-500/40 py-2 text-xs font-bold text-amber-300">Try again</button>
                         </div>
                       )}
+                      {allowancePhase === 'ready' && allowanceResult.partial && (
+                        <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+                          The explorer did not return a full log. This list includes approvals from the last 9,999 blocks, so older approvals can be missing.
+                        </p>
+                      )}
                       {allowancePhase === 'ready' && shownAllowances?.length === 0 && (
-                        <p className="py-4 text-center text-xs text-slate-500">No active USDC or EURC approvals.</p>
+                        <p className="py-4 text-center text-xs text-slate-500">No active token approvals.</p>
                       )}
                       {Array.isArray(shownAllowances) && shownAllowances.map((row) => {
                         const key = `${row.asset}:${row.spender}`
@@ -1646,10 +1785,10 @@ export default function App() {
                         return (
                           <div key={key} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
                             <div className="min-w-0">
-                              <div className="font-mono text-[10px] tracking-widest text-slate-500">{assetLabel(row.asset)} SPENDER</div>
+                              <div className="font-mono text-[10px] tracking-widest text-slate-500">{row.symbol || assetLabel(row.asset)} SPENDER</div>
                               <div className="break-all font-mono text-xs">{row.spender}</div>
                               <div className="mt-2 font-mono text-[10px] tracking-widest text-slate-500">APPROVED AMOUNT</div>
-                              <div className={`font-mono text-xs ${isDark ? 'text-cyan-400' : 'text-cyan-700'}`}>{formatAllowance(row.value)} {assetLabel(row.asset)}</div>
+                              <div className={`font-mono text-xs ${isDark ? 'text-cyan-400' : 'text-cyan-700'}`}>{formatAllowance(row.value, row.decimals)} {row.symbol || assetLabel(row.asset)}</div>
                             </div>
                             <button
                               type="button"
@@ -1667,7 +1806,7 @@ export default function App() {
 
                   {utilityTab === 'token' && (
                     <div className="space-y-4">
-                      <p className="text-sm text-slate-500">Deploys FixedSupplyToken. The whole supply is minted once to this wallet. There is no admin and no second mint.</p>
+                      <p className="text-sm text-slate-500">Deploys FixedSupplyToken with 18 decimals. The whole supply is minted once to this wallet. A matching deploy is saved as a custom token so you can send it or run payroll. You can also paste any Arc ERC-20.</p>
                       {!CAN_DEPLOY_TOKEN && <p className="font-mono text-xs text-amber-300">Bytecode is not built yet. From pulse-app, install solc@0.8.28 and run node ../contracts/compile.mjs.</p>}
                       <div className="grid grid-cols-2 gap-4">
                         <Field label="NAME"><input value={forgeName} onChange={(event) => setForgeName(event.target.value)} className={inputClass} /></Field>
@@ -1685,6 +1824,29 @@ export default function App() {
                           wholeSupply,
                           expectedChainId: ready.network.chainId,
                         })
+                        try {
+                          const meta = await readCustomTokenMetadata(providerRef.current, result.address, ready.network)
+                          const matches = meta.decimals === 18 && meta.name === metadata.name && meta.symbol === metadata.symbol
+                          if (matches) {
+                            await persistCustomToken(account, ready.network.chainId, meta)
+                            pushLog(`${meta.symbol} was added to custom tokens.`, 'success')
+                          } else {
+                            setPendingToken({ ...meta, chainKey: `${account}:${ready.network.chainId}` })
+                            pushLog(`Token deployed at ${result.address}. Add ${meta.symbol} if you want to pay with it.`, 'info')
+                          }
+                        } catch (error) {
+                          setPendingToken({
+                            id: `custom:${result.address}`,
+                            address: result.address,
+                            name: metadata.name,
+                            symbol: metadata.symbol,
+                            decimals: 18,
+                            isOfficial: false,
+                            gasToken: false,
+                            chainKey: `${account}:${ready.network.chainId}`,
+                          })
+                          pushLog(`${toUserError(error).message} You can add the deployed token from this screen.`, 'warning')
+                        }
                         await safeRemember([{
                           id: createId(),
                           hash: result.hash,
@@ -1703,6 +1865,89 @@ export default function App() {
                         celebrate()
                         await refresh()
                       })} className="w-full rounded-lg bg-purple-600 py-3 font-bold text-white disabled:opacity-50">Deploy token</button>
+                      {shownPending && (
+                        <button
+                          type="button"
+                          disabled={isSavingToken}
+                          onClick={() => runAction(setIsSavingToken, async () => {
+                            const ready = requireReady()
+                            const account = addressRef.current
+                            const meta = await readCustomTokenMetadata(providerRef.current, shownPending.address, ready.network)
+                            await persistCustomToken(account, ready.network.chainId, meta)
+                            pushLog(`${meta.symbol} was added to custom tokens.`, 'success')
+                          })}
+                          className="w-full rounded-lg border border-purple-500/40 py-2 text-xs font-bold text-purple-300 disabled:opacity-50"
+                        >
+                          Add {shownPending.symbol} to custom tokens
+                        </button>
+                      )}
+                      <div className="space-y-3 border-t border-white/10 pt-4">
+                        <p className="text-sm text-slate-500">Custom tokens stay in this browser for this wallet and this Arc network. Nexoria reads symbol, name, and decimals from the contract before saving.</p>
+                        {!walletAddress && <p className="py-2 text-center text-xs text-slate-500">Connect a wallet to add a custom token.</p>}
+                        {walletAddress && !arc && <p className="py-2 text-center text-xs text-amber-300">Switch to Arc before adding a custom token.</p>}
+                        {dataReady && arc && (
+                          <>
+                            <Field label="TOKEN CONTRACT">
+                              <input
+                                value={customAddress}
+                                onChange={(event) => setCustomAddress(event.target.value)}
+                                placeholder="0x"
+                                autoComplete="off"
+                                spellCheck={false}
+                                className={inputClass}
+                              />
+                            </Field>
+                            <button
+                              type="button"
+                              disabled={isSavingToken || !customAddress.trim()}
+                              onClick={() => runAction(setIsSavingToken, async () => {
+                                const ready = requireReady()
+                                const account = addressRef.current
+                                const meta = await readCustomTokenMetadata(providerRef.current, customAddress, ready.network)
+                                await persistCustomToken(account, ready.network.chainId, meta)
+                                setCustomAddress('')
+                                pushLog(`${meta.symbol} was added to custom tokens.`, 'success')
+                              })}
+                              className="w-full rounded-lg bg-purple-500 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            >
+                              {isSavingToken ? 'Checking token…' : 'Add custom token'}
+                            </button>
+                            {customTokens.length === 0 && <p className="py-2 text-center text-xs text-slate-500">No custom tokens on this network.</p>}
+                            {customTokens.map((token) => (
+                              <div key={token.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${isDark ? 'border-white/10' : 'border-slate-200'}`}>
+                                <div className="min-w-0">
+                                  <div className="text-sm font-bold">{token.symbol}</div>
+                                  <div className="text-[10px] text-slate-500">{token.name} · {token.decimals} decimals</div>
+                                  <div className="break-all font-mono text-[10px] text-slate-500">{token.address}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={isSavingToken}
+                                  onClick={() => {
+                                    if (!window.confirm(`Remove ${token.symbol} from custom tokens?`)) return
+                                    runAction(setIsSavingToken, async () => {
+                                      const ready = requireReady()
+                                      const account = addressRef.current
+                                      const generation = tokenGenRef.current + 1
+                                      tokenGenRef.current = generation
+                                      const saved = await saveCustomTokens(account, ready.network.chainId, removeCustomToken(customTokensRef.current, token.id))
+                                      if (addressRef.current !== account || tokenGenRef.current !== generation) {
+                                        throw new AppError('The wallet account changed. Save the token again.')
+                                      }
+                                      customTokensRef.current = saved
+                                      setTokenBook({ key: `${account}:${ready.network.chainId}`, tokens: saved })
+                                      pushLog(`${token.symbol} was removed from custom tokens.`, 'info')
+                                    })
+                                  }}
+                                  className={`shrink-0 rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-50 ${isDark ? 'border-rose-500/40 text-rose-300' : 'border-rose-500/40 text-rose-700'}`}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

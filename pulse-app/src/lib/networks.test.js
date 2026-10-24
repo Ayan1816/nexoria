@@ -1,8 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ARC_MAINNET, ARC_TESTNET, NETWORKS } from './networks.js'
+import { ARC_MAINNET, ARC_TESTNET, DEFAULT_NETWORK, NETWORKS, findOfficialToken } from './networks.js'
 
 test('uses the published Arc chain ids and precompiles', () => {
+  assert.equal(NETWORKS[0], ARC_MAINNET)
+  assert.equal(DEFAULT_NETWORK, ARC_MAINNET)
+  assert.equal(ARC_MAINNET.chainId, 5042)
+  assert.equal(ARC_MAINNET.hexChainId, '0x13b2')
+  assert.deepEqual(ARC_MAINNET.rpcUrls, ['https://rpc.mainnet.arc.io'])
+  assert.equal(ARC_MAINNET.explorer, 'https://explorer.arc.io')
+  assert.equal(ARC_MAINNET.faucet, '')
+  assert.equal(ARC_MAINNET.contracts.eurc, '0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1')
+  assert.equal(ARC_TESTNET.chainId, 5042002)
+  assert.equal(ARC_TESTNET.hexChainId, '0x4cef52')
+  assert.deepEqual(ARC_TESTNET.rpcUrls, ['https://rpc.testnet.arc.io'])
+  assert.equal(ARC_TESTNET.explorer, 'https://explorer.testnet.arc.io')
+  assert.equal(ARC_TESTNET.faucet, 'https://faucet.circle.com')
+  assert.equal(ARC_TESTNET.contracts.eurc, '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a')
   assert.equal(Number(ARC_TESTNET.hexChainId), 5042002)
   assert.equal(Number(ARC_MAINNET.hexChainId), 5042)
   for (const network of NETWORKS) {
@@ -13,8 +27,24 @@ test('uses the published Arc chain ids and precompiles', () => {
     assert.equal(network.contracts.multicall3From, '0x522fAf9A91c41c443c66765030741e4AaCe147D0')
     assert.equal(network.rpcUrls.some((url) => url.includes('arc.network')), false)
     for (const url of network.rpcUrls) assert.match(url, /^https:\/\/[a-z0-9.-]+\.arc\.io$/)
-    assert.match(network.explorer, /^https:\/\//)
+    assert.match(network.explorer, /^https:\/\/explorer(\.testnet)?\.arc\.io$/)
+    assert.deepEqual(network.tokens.map((token) => token.id), ['usdc', 'eurc', 'usyc', 'cirbtc', 'weth'])
+    assert.deepEqual(network.tokens.map((token) => token.decimals), [6, 6, 6, 8, 18])
+    assert.equal(network.tokens.every((token) => token.isOfficial === true), true)
+    assert.equal(findOfficialToken(network, 'usdc').gasToken, true)
+    assert.equal(findOfficialToken(network, 'usdc').address, network.contracts.usdc)
+    assert.equal(findOfficialToken(network, 'eurc').address, network.contracts.eurc)
+    for (const token of network.tokens) {
+      assert.match(token.address, /^0x[0-9a-fA-F]{40}$/)
+      assert.equal(token.symbol.length > 0, true)
+    }
   }
-  assert.equal(ARC_TESTNET.contracts.eurc, '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a')
-  assert.equal(ARC_MAINNET.contracts.eurc, '0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1')
+  assert.equal(findOfficialToken(ARC_MAINNET, 'cirbtc').address, '0x171A4217b86A807A64eB94757Db6849fb4bDbAA0')
+  assert.equal(findOfficialToken(ARC_TESTNET, 'cirbtc').address, '0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF')
+  assert.equal(findOfficialToken(ARC_MAINNET, 'usyc').address, '0x8a5D989Bbb96929F689B0200f435f53dA42bF490')
+  assert.equal(findOfficialToken(ARC_TESTNET, 'usyc').address, '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C')
+  assert.equal(findOfficialToken(ARC_MAINNET, 'weth').address, '0x128cC466B61f542da60c70e3aA11c10e19B84EDB')
+  assert.equal(findOfficialToken(ARC_TESTNET, 'weth').address, '0x2c4047028a72803939b6fb674D01bC059B5C4961')
+  assert.equal(findOfficialToken(ARC_MAINNET, 'weth').decimals, 18)
+  assert.equal(findOfficialToken(ARC_MAINNET, 'cirbtc').decimals, 8)
 })

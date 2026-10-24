@@ -56,6 +56,39 @@ test('keeps EURC value and USDC gas separate', () => {
   }), /gas/)
 })
 
+test('uses the token decimals for non-USDC balances and still reserves USDC for gas', () => {
+  assert.throws(() => assertGasAndValue({
+    asset: 'cirbtc',
+    symbol: 'cirBTC',
+    decimals: 8,
+    gasToken: false,
+    amount: 100_000_000n,
+    tokenBalance: 50_000_000n,
+    nativeBalance: 10n ** 18n,
+    feeNative: 1n,
+  }), /Not enough cirBTC/)
+  assert.throws(() => assertGasAndValue({
+    asset: 'weth',
+    symbol: 'WETH',
+    decimals: 18,
+    gasToken: false,
+    amount: 10n ** 18n,
+    tokenBalance: 10n ** 18n,
+    nativeBalance: 0n,
+    feeNative: 1n,
+  }), /Not enough USDC for gas/)
+  assert.doesNotThrow(() => assertGasAndValue({
+    asset: 'weth',
+    symbol: 'WETH',
+    decimals: 18,
+    gasToken: false,
+    amount: 10n ** 18n,
+    tokenBalance: 10n ** 18n,
+    nativeBalance: 1n,
+    feeNative: 1n,
+  }))
+})
+
 test('buffers gas without crossing the block limit', () => {
   assert.equal(bufferedGasLimit(21_000n), 25_200n)
   assert.throws(() => bufferedGasLimit(20_999n), /minimum/)

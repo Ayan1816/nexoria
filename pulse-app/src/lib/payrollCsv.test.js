@@ -57,6 +57,17 @@ test('rejects a payroll csv that is larger than one batch', () => {
   assert.match(result.errors.join('\n'), /at most 25/)
 })
 
+test('validates payroll amounts with the selected token decimals', () => {
+  const eight = payrollCsvToText(`${ALICE},1.12345678\n`, [], 8)
+  assert.deepEqual(eight.errors, [])
+  assert.equal(eight.text, `${ALICE} 1.12345678`)
+  const tooFine = payrollCsvToText(`${ALICE},1.123456789\n`, [], 8)
+  assert.equal(tooFine.text, '')
+  assert.match(tooFine.errors.join('\n'), /decimal places/)
+  const wei = payrollCsvToText(`${ALICE},0.000000000000000001\n`, [], 18)
+  assert.deepEqual(wei.errors, [])
+})
+
 test('the payroll screen can upload a csv', () => {
   const app = readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')
   assert.match(app, /Upload CSV/)

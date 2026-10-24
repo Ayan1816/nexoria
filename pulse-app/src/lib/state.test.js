@@ -58,6 +58,36 @@ test('accepts legacy receipts and scheduled tasks', () => {
   assert.equal(normalizeTasks(state.tasks, 5_000)[0].status, 'ready')
 })
 
+test('keeps official 8-decimal tasks and custom token tasks', () => {
+  const custom = '0xabcabcabcabcabcabcabcabcabcabcabcabcabca'
+  const state = sanitizeState({
+    tasks: [
+      { id: 'btc', address: ADDRESS, amount: '0.00000001', asset: 'cirbtc', delayMinutes: 2, status: 'pending', triggerAt: 1, chainId: 5042 },
+      {
+        id: 'mine',
+        address: ADDRESS,
+        amount: '1.5',
+        asset: `custom:${custom}`,
+        symbol: 'POINTS',
+        decimals: 18,
+        tokenAddress: custom,
+        delayMinutes: 3,
+        status: 'pending',
+        triggerAt: 1,
+        chainId: 5042,
+      },
+    ],
+    txHistory: [{ id: '1', hash: HASH, amount: '0.00000001', token: 'cirBTC', to: ADDRESS, time: '12:00:00', status: 'confirmed', chainId: 5042 }],
+  })
+  assert.equal(state.tasks[0].asset, 'cirbtc')
+  assert.equal(state.tasks[0].decimals, 8)
+  assert.equal(state.tasks[0].symbol, 'cirBTC')
+  assert.equal(state.tasks[1].asset, `custom:${custom}`)
+  assert.equal(state.tasks[1].decimals, 18)
+  assert.equal(state.tasks[1].tokenAddress, custom)
+  assert.equal(state.txHistory[0].token, 'cirBTC')
+})
+
 test('drops a task whose amount or delay cannot be signed', () => {
   const state = sanitizeState({
     tasks: [
